@@ -9,8 +9,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/willuny-labs/wand/logger"
-	"github.com/willuny-labs/wand/middleware"
+	"github.com/WillunyLabs-LLC/wand/logger"
+	"github.com/WillunyLabs-LLC/wand/middleware"
 )
 
 func mustGET(tb testing.TB, r *Router, pattern string, handler HandleFunc) {
@@ -274,10 +274,10 @@ func TestRouter_DuplicateParamName(t *testing.T) {
 	}
 }
 
-func TestRouter_UnsupportedMethod(t *testing.T) {
+func TestRouter_InvalidMethod(t *testing.T) {
 	r := NewRouter()
-	if err := r.Handle("FOO", "/foo", func(w http.ResponseWriter, req *http.Request) {}); err == nil {
-		t.Fatalf("expected error for unsupported method")
+	if err := r.Handle("BAD METHOD", "/foo", func(w http.ResponseWriter, req *http.Request) {}); err == nil {
+		t.Fatalf("expected error for invalid method")
 	}
 }
 
@@ -757,6 +757,135 @@ func TestRouter_CustomMethodNotAllowed(t *testing.T) {
 	}
 	if called != 1 {
 		t.Fatalf("expected MethodNotAllowed not to be called for OPTIONS")
+	}
+}
+
+func TestRouter_HostMatching(t *testing.T) {
+	r := NewRouter()
+	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("default"))
+	})
+
+	api := r.Host("api.example.com")
+	if err := api.GET("/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("api"))
+	}); err != nil {
+		t.Fatalf("host register failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Host = "api.example.com"
+	r.ServeHTTP(rec, req)
+	if rec.Body.String() != "api" {
+		t.Fatalf("expected api host route, got %q", rec.Body.String())
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Host = "other.example.com"
+	r.ServeHTTP(rec, req)
+	if rec.Body.String() != "default" {
+		t.Fatalf("expected default route, got %q", rec.Body.String())
+	}
+}
+
+func TestRouter_HostWithPort(t *testing.T) {
+	r := NewRouter()
+	api := r.Host("api.example.com")
+	if err := api.GET("/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}); err != nil {
+		t.Fatalf("host register failed: %v", err)
+	}
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Host = "api.example.com:8080"
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRouter_CustomMethod(t *testing.T) {
+	r := NewRouter()
+	if err := r.Handle("PURGE", "/cache", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}); err != nil {
+		t.Fatalf("register custom method failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest("PURGE", "/cache", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/cache", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); allow != "OPTIONS, PURGE" && allow != "PURGE, OPTIONS" {
+		t.Fatalf("unexpected Allow header: %q", allow)
+	}
+}
+
+func TestRouter_IgnoreCase(t *testing.T) {
+	r := NewRouter()
+	r.IgnoreCase = true
+	mustGET(t, r, "/Users/:ID", func(w http.ResponseWriter, req *http.Request) {
+		id, ok := Param(w, "ID")
+		if !ok || id != "AbC" {
+			t.Fatalf("expected id AbC, got %q", id)
+		}
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/users/AbC", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+}
+
+func TestRouter_PanicHandler(t *testing.T) {
+	r := NewRouter()
+	r.PanicHandler = func(w http.ResponseWriter, req *http.Request, _ any) {
+		w.WriteHeader(http.StatusTeapot)
+	}
+	mustGET(t, r, "/boom", func(w http.ResponseWriter, req *http.Request) {
+		panic("boom")
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/boom", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusTeapot {
+		t.Fatalf("expected 418, got %d", rec.Code)
+	}
+}
+
+func TestFrozenRouter_IgnoreCaseAndHost(t *testing.T) {
+	r := NewRouter()
+	r.IgnoreCase = true
+	api := r.Host("api.example.com")
+	if err := api.GET("/Users/:id", func(w http.ResponseWriter, req *http.Request) {
+		id, _ := Param(w, "id")
+		w.Write([]byte(id))
+	}); err != nil {
+		t.Fatalf("register failed: %v", err)
+	}
+	fr := mustFreeze(t, r)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/users/AbC", nil)
+	req.Host = "api.example.com:443"
+	fr.ServeHTTP(rec, req)
+	if rec.Body.String() != "AbC" {
+		t.Fatalf("expected AbC, got %q", rec.Body.String())
 	}
 }
 

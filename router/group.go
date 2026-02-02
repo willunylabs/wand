@@ -23,12 +23,18 @@ func (r *Router) Use(mw ...Middleware) error {
 
 // Group creates a new route group with a path prefix and middlewares.
 func (r *Router) Group(prefix string, mw ...Middleware) *Group {
-	return newGroup(r, cleanPrefix(prefix), mw)
+	return newGroup(r, "", cleanPrefix(prefix), mw)
+}
+
+// Host creates a host-specific route group.
+func (r *Router) Host(host string) *Group {
+	return newGroup(r, normalizeHost(host), "", nil)
 }
 
 // Group represents a nested routing group with its own prefix and middleware chain.
 type Group struct {
 	router      *Router
+	host        string
 	prefix      string
 	middlewares []Middleware
 }
@@ -47,12 +53,12 @@ func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 	combined := make([]Middleware, 0, len(g.middlewares)+len(mw))
 	combined = append(combined, g.middlewares...)
 	combined = append(combined, mw...)
-	return newGroup(g.router, joinPaths(g.prefix, cleanPrefix(prefix)), combined)
+	return newGroup(g.router, g.host, joinPaths(g.prefix, cleanPrefix(prefix)), combined)
 }
 
 // Handle registers a route with the group's prefix and middlewares.
 func (g *Group) Handle(method, pattern string, handler HandleFunc) error {
-	return g.router.handle(method, joinPaths(g.prefix, pattern), handler, g.middlewares)
+	return g.router.handle(g.host, method, joinPaths(g.prefix, pattern), handler, g.middlewares)
 }
 
 func (g *Group) GET(pattern string, handler HandleFunc) error {
@@ -83,11 +89,12 @@ func (g *Group) OPTIONS(pattern string, handler HandleFunc) error {
 	return g.Handle(http.MethodOptions, pattern, handler)
 }
 
-func newGroup(r *Router, prefix string, mw []Middleware) *Group {
+func newGroup(r *Router, host, prefix string, mw []Middleware) *Group {
 	chain := make([]Middleware, 0, len(mw))
 	chain = append(chain, mw...)
 	return &Group{
 		router:      r,
+		host:        host,
 		prefix:      prefix,
 		middlewares: chain,
 	}

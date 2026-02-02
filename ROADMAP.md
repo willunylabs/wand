@@ -6,16 +6,16 @@ To provide a **high-performance, zero-allocation HTTP router** for Go, fully com
 ## Track A: Core Routing (Priority P0) - *The Engine*
 *Focus: Routing logic, matching algorithms, and standard compliance.*
 
-- [ ] **Host Matching**: 
+- [x] **Host Matching**: 
     - Support routing based on `Host` header (e.g., `api.example.com` -> Subtree).
     - Strategy: `Host -> Router` map or `Host -> Subtree` to avoid per-request scanning.
-- [ ] **Custom HTTP Methods**: 
+- [x] **Custom HTTP Methods**: 
     - Support non-standard methods (e.g., `LINK`, `UNLINK`, `PURGE`, WebDAV).
     - Refactor `isStandardMethod` and `Allow` header construction.
-- [ ] **Case-Insensitive Matching**: 
+- [x] **Case-Insensitive Matching**: 
     - Distinct opt-in setting (`Router.IgnoreCase`).
     - Define behavior for path cleaning and redirects.
-- [ ] **Router-level Panic Handler**: 
+- [x] **Router-level Panic Handler**: 
     - A lightweight simple fallback for unhandled panics (distinct from middleware.Recovery).
 
 ## Track B: Middleware Ecosystem (Extensions)

@@ -7,23 +7,12 @@ import (
 	"net"
 	"net/http"
 	"path"
+	"sort"
 	"strings"
 	"sync"
 )
 
 const MaxPathLength = 4096 // Maximum path length (DoS protection).
-
-const (
-	methodBitGet uint8 = 1 << iota
-	methodBitHead
-	methodBitPost
-	methodBitPut
-	methodBitPatch
-	methodBitDelete
-	methodBitOptions
-)
-
-var allowHeaderTable [1 << 7]string
 
 // HandleFunc defines the handler function type.
 type HandleFunc func(http.ResponseWriter, *http.Request)
@@ -52,22 +41,29 @@ func Param(w http.ResponseWriter, key string) (string, bool) {
 	return "", false
 }
 
+type routeTable struct {
+	roots     map[string]*node
+	static    map[string]map[string]HandleFunc
+	hasParams map[string]bool
+}
+
 // Router holds the routing tree.
 // [Concurrency]: registration is serialized with an RWMutex; concurrent ServeHTTP is safe.
 // Run-time registration is supported but will block reads while the tree is updated.
 type Router struct {
 	mu        sync.RWMutex
-	roots     map[string]*node                 // method -> root node (GET, POST...)
-	static    map[string]map[string]HandleFunc // method -> (path -> handler)
-	hasParams map[string]bool                  // method -> has any dynamic routes
-	paramPool sync.Pool                        // pool for Params (Zero Alloc Params)
-	partsPool sync.Pool                        // pool for pathSegments (Zero Alloc Split & Indices)
-	rwPool    sync.Pool                        // pool for paramRW wrappers (Zero Alloc Wrapper)
+	table     routeTable
+	hosts     map[string]*routeTable // host -> routing table
+	paramPool sync.Pool              // pool for Params (Zero Alloc Params)
+	partsPool sync.Pool              // pool for pathSegments (Zero Alloc Split & Indices)
+	rwPool    sync.Pool              // pool for paramRW wrappers (Zero Alloc Wrapper)
 
 	middlewares      []Middleware
 	routesCount      int
+	IgnoreCase       bool
 	NotFound         HandleFunc
 	MethodNotAllowed HandleFunc
+	PanicHandler     func(http.ResponseWriter, *http.Request, any)
 }
 
 // pathSegments holds path segments and original indices.
@@ -127,9 +123,12 @@ func (w paramRW) ReadFrom(r io.Reader) (int64, error) {
 // NewRouter creates a new router instance.
 func NewRouter() *Router {
 	return &Router{
-		roots:     make(map[string]*node),
-		static:    make(map[string]map[string]HandleFunc),
-		hasParams: make(map[string]bool),
+		table: routeTable{
+			roots:     make(map[string]*node),
+			static:    make(map[string]map[string]HandleFunc),
+			hasParams: make(map[string]bool),
+		},
+		hosts: make(map[string]*routeTable),
 		paramPool: sync.Pool{
 			New: func() interface{} {
 				return &Params{
@@ -155,18 +154,17 @@ func NewRouter() *Router {
 	}
 }
 
-func init() {
-	for mask := 0; mask < len(allowHeaderTable); mask++ {
-		allowHeaderTable[mask] = buildAllowHeaderMask(uint8(mask))
-	}
-}
-
 // getParts splits the path with zero allocations and records indices.
 // Returns *pathSegments so ServeHTTP can return it to the pool.
 func (r *Router) getParts(path string) (*pathSegments, bool) {
+	return r.getPartsWithRaw(path, path)
+}
+
+// getPartsWithRaw is like getParts but keeps raw for param extraction.
+func (r *Router) getPartsWithRaw(path, raw string) (*pathSegments, bool) {
 	segs := r.partsPool.Get().(*pathSegments)
 
-	segs.path = path // store original path
+	segs.path = raw // store original path
 	// Reset slices (keep capacity)
 	segs.parts = segs.parts[:0]
 	segs.indices = segs.indices[:0]
@@ -214,6 +212,70 @@ func cleanPath(p string) string {
 	return cp
 }
 
+func lowerASCII(s string) string {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c >= 'A' && c <= 'Z' {
+			b := make([]byte, len(s))
+			for j := 0; j < len(s); j++ {
+				cc := s[j]
+				if cc >= 'A' && cc <= 'Z' {
+					cc += 'a' - 'A'
+				}
+				b[j] = cc
+			}
+			return string(b)
+		}
+	}
+	return s
+}
+
+func normalizeHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+	}
+	return lowerASCII(host)
+}
+
+func newRouteTable() *routeTable {
+	return &routeTable{
+		roots:     make(map[string]*node),
+		static:    make(map[string]map[string]HandleFunc),
+		hasParams: make(map[string]bool),
+	}
+}
+
+func (r *Router) tableForHostLocked(host string) *routeTable {
+	if host == "" {
+		return &r.table
+	}
+	if r.hosts == nil {
+		r.hosts = make(map[string]*routeTable)
+	}
+	if t, ok := r.hosts[host]; ok {
+		return t
+	}
+	t := newRouteTable()
+	r.hosts[host] = t
+	return t
+}
+
+func (r *Router) tableForHostRLocked(host string) *routeTable {
+	if host == "" {
+		return &r.table
+	}
+	if t, ok := r.hosts[host]; ok {
+		return t
+	}
+	return &r.table
+}
+
 // resetParamRW resets paramRW for reuse.
 func resetParamRW(prw *paramRW) {
 	prw.ResponseWriter = nil
@@ -222,41 +284,62 @@ func resetParamRW(prw *paramRW) {
 
 // Handle registers a route.
 func (r *Router) Handle(method, pattern string, handler HandleFunc) error {
-	return r.handle(method, pattern, handler, nil)
+	return r.handle("", method, pattern, handler, nil)
 }
 
-func (r *Router) handle(method, pattern string, handler HandleFunc, groupMws []Middleware) error {
+func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupMws []Middleware) error {
 	if handler == nil {
 		return fmt.Errorf("nil handler for route: %s", pattern)
 	}
-	if !isStandardMethod(method) {
+	if !isValidMethod(method) {
 		return fmt.Errorf("unsupported method: %s", method)
 	}
 	cleaned := cleanPath(pattern)
 	if cleaned != pattern {
 		return fmt.Errorf("non-canonical pattern: %s (clean: %s)", pattern, cleaned)
 	}
-	pattern = cleaned
-	if len(pattern) > MaxPathLength {
+	if len(cleaned) > MaxPathLength {
 		return fmt.Errorf("pattern too long: %s", pattern)
 	}
 
 	segs, ok := r.getParts(cleaned)
 	if !ok {
-		return fmt.Errorf("invalid pattern: %s", pattern)
+		return fmt.Errorf("invalid pattern: %s", cleaned)
 	}
 	if len(segs.parts) > MaxDepth {
 		r.partsPool.Put(segs)
-		return fmt.Errorf("route too deep, possible DoS attack: %s", pattern)
+		return fmt.Errorf("route too deep, possible DoS attack: %s", cleaned)
 	}
 
-	if err := validateParamNames(segs.parts, pattern); err != nil {
+	if err := validateParamNames(segs.parts, cleaned); err != nil {
 		r.partsPool.Put(segs)
 		return err
 	}
 
+	matchPattern := cleaned
+	matchParts := segs.parts
+	if r.IgnoreCase {
+		trailingSlash := len(cleaned) > 1 && cleaned[len(cleaned)-1] == '/'
+		matchParts = make([]string, len(segs.parts))
+		for i, part := range segs.parts {
+			if len(part) > 0 && (part[0] == ':' || part[0] == '*') {
+				matchParts[i] = part
+			} else {
+				matchParts[i] = lowerASCII(part)
+			}
+		}
+		if len(matchParts) == 0 {
+			matchPattern = "/"
+		} else {
+			matchPattern = "/" + strings.Join(matchParts, "/")
+			if trailingSlash {
+				matchPattern += "/"
+			}
+		}
+	}
+
 	hasParams := false
-	for _, part := range segs.parts {
+	for _, part := range matchParts {
 		if len(part) > 0 && (part[0] == ':' || part[0] == '*') {
 			hasParams = true
 			break
@@ -287,24 +370,27 @@ func (r *Router) handle(method, pattern string, handler HandleFunc, groupMws []M
 	}
 
 	// insert only needs parts
+	host = normalizeHost(host)
+
 	r.mu.Lock()
-	root, ok := r.roots[method]
+	table := r.tableForHostLocked(host)
+	root, ok := table.roots[method]
 	if !ok {
 		root = &node{}
-		r.roots[method] = root
+		table.roots[method] = root
 	}
-	err := root.insert(pattern, segs.parts, 0, handler, hasParams)
+	err := root.insert(matchPattern, matchParts, 0, handler, hasParams)
 	if err == nil {
 		r.routesCount++
 		if hasParams {
-			r.hasParams[method] = true
+			table.hasParams[method] = true
 		} else {
-			m := r.static[method]
+			m := table.static[method]
 			if m == nil {
 				m = make(map[string]HandleFunc, 8)
-				r.static[method] = m
+				table.static[method] = m
 			}
-			m[pattern] = handler
+			m[matchPattern] = handler
 		}
 	}
 	r.mu.Unlock()
@@ -374,6 +460,14 @@ func (r *Router) OPTIONS(pattern string, handler HandleFunc) error {
 
 // ServeHTTP implements http.Handler.
 func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if r.PanicHandler != nil {
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.PanicHandler(w, req, rec)
+			}
+		}()
+	}
+
 	if len(req.URL.Path) > MaxPathLength {
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
@@ -395,19 +489,26 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	matchPath := cleaned
+	if r.IgnoreCase {
+		matchPath = lowerASCII(cleaned)
+	}
+	rawPath := cleaned
+	host := normalizeHost(req.Host)
+
 	method := req.Method
 	if method == http.MethodHead {
-		if r.serveMethod(w, req, http.MethodHead, cleaned) {
+		if r.serveMethod(w, req, http.MethodHead, matchPath, rawPath, host) {
 			return
 		}
 		method = http.MethodGet
 	}
 
-	if r.serveMethod(w, req, method, cleaned) {
+	if r.serveMethod(w, req, method, matchPath, rawPath, host) {
 		return
 	}
 
-	if allow, ok := r.allowedMethods(cleaned); ok {
+	if allow, ok := r.allowedMethods(matchPath, host); ok {
 		w.Header().Set("Allow", allow)
 		if req.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -428,24 +529,25 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, cleaned string) bool {
+func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath, host string) bool {
 	r.mu.RLock()
-	if m, ok := r.static[method]; ok {
-		if handler, ok := m[cleaned]; ok {
+	table := r.tableForHostRLocked(host)
+	if m, ok := table.static[method]; ok {
+		if handler, ok := m[matchPath]; ok {
 			r.mu.RUnlock()
 			handler(w, req)
 			return true
 		}
-		if !r.hasParams[method] {
+		if !table.hasParams[method] {
 			r.mu.RUnlock()
 			return false
 		}
-	} else if !r.hasParams[method] {
+	} else if !table.hasParams[method] {
 		r.mu.RUnlock()
 		return false
 	}
 
-	segs, ok := r.getParts(cleaned)
+	segs, ok := r.getPartsWithRaw(matchPath, rawPath)
 	if !ok {
 		r.mu.RUnlock()
 		return false
@@ -456,7 +558,7 @@ func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, c
 		return false
 	}
 
-	root, ok := r.roots[method]
+	root, ok := table.roots[method]
 	if !ok {
 		r.partsPool.Put(segs)
 		r.mu.RUnlock()
@@ -497,67 +599,64 @@ func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, c
 	return false
 }
 
-func (r *Router) allowedMethods(cleaned string) (string, bool) {
+func (r *Router) allowedMethods(matchPath, host string) (string, bool) {
 	r.mu.RLock()
-	defer r.mu.RUnlock()
+	table := r.tableForHostRLocked(host)
 
-	var mask uint8
-
-	for method, m := range r.static {
+	methods := make(map[string]struct{}, 8)
+	for method, m := range table.static {
 		if m == nil {
 			continue
 		}
-		if _, ok := m[cleaned]; ok {
-			if bit, ok := methodBit(method); ok {
-				mask |= bit
-			}
+		if _, ok := m[matchPath]; ok {
+			methods[method] = struct{}{}
 		}
 	}
 
 	var segs *pathSegments
 	var segsOK bool
-	for method, has := range r.hasParams {
+	for method, has := range table.hasParams {
 		if !has {
 			continue
 		}
-		root := r.roots[method]
+		root := table.roots[method]
 		if root == nil {
 			continue
 		}
 		if segs == nil {
-			segs, segsOK = r.getParts(cleaned)
+			segs, segsOK = r.getParts(matchPath)
 			if !segsOK {
 				if segs != nil {
 					r.partsPool.Put(segs)
 				}
+				r.mu.RUnlock()
 				return "", false
 			}
 			if len(segs.parts) > MaxDepth {
 				r.partsPool.Put(segs)
+				r.mu.RUnlock()
 				return "", false
 			}
 		}
 		if root.search(segs, 0, nil) != nil {
-			if bit, ok := methodBit(method); ok {
-				mask |= bit
-			}
+			methods[method] = struct{}{}
 		}
 	}
 
 	if segs != nil {
 		r.partsPool.Put(segs)
 	}
+	r.mu.RUnlock()
 
-	if mask == 0 {
+	if len(methods) == 0 {
 		return "", false
 	}
-
-	if mask&methodBitGet != 0 {
-		mask |= methodBitHead
+	if _, ok := methods[http.MethodGet]; ok {
+		methods[http.MethodHead] = struct{}{}
 	}
-	mask |= methodBitOptions
+	methods[http.MethodOptions] = struct{}{}
 
-	return allowHeaderForMask(mask), true
+	return buildAllowHeader(methods), true
 }
 
 var methodOrder = []string{
@@ -570,19 +669,25 @@ var methodOrder = []string{
 	http.MethodOptions,
 }
 
-func allowHeaderForMask(mask uint8) string {
-	return allowHeaderTable[mask]
+var standardMethodSet = map[string]struct{}{
+	http.MethodGet:     {},
+	http.MethodHead:    {},
+	http.MethodPost:    {},
+	http.MethodPut:     {},
+	http.MethodPatch:   {},
+	http.MethodDelete:  {},
+	http.MethodOptions: {},
 }
 
-func buildAllowHeaderMask(mask uint8) string {
-	if mask == 0 {
+func buildAllowHeader(methods map[string]struct{}) string {
+	if len(methods) == 0 {
 		return ""
 	}
-
 	var b strings.Builder
 	first := true
+
 	for _, method := range methodOrder {
-		if bit, ok := methodBit(method); ok && (mask&bit) != 0 {
+		if _, ok := methods[method]; ok {
 			if !first {
 				b.WriteString(", ")
 			}
@@ -590,31 +695,39 @@ func buildAllowHeaderMask(mask uint8) string {
 			first = false
 		}
 	}
+
+	var custom []string
+	for method := range methods {
+		if !isStandardMethod(method) {
+			custom = append(custom, method)
+		}
+	}
+	sort.Strings(custom)
+	for _, method := range custom {
+		if !first {
+			b.WriteString(", ")
+		}
+		b.WriteString(method)
+		first = false
+	}
+
 	return b.String()
 }
 
 func isStandardMethod(method string) bool {
-	_, ok := methodBit(method)
+	_, ok := standardMethodSet[method]
 	return ok
 }
 
-func methodBit(method string) (uint8, bool) {
-	switch method {
-	case http.MethodGet:
-		return methodBitGet, true
-	case http.MethodHead:
-		return methodBitHead, true
-	case http.MethodPost:
-		return methodBitPost, true
-	case http.MethodPut:
-		return methodBitPut, true
-	case http.MethodPatch:
-		return methodBitPatch, true
-	case http.MethodDelete:
-		return methodBitDelete, true
-	case http.MethodOptions:
-		return methodBitOptions, true
-	default:
-		return 0, false
+func isValidMethod(method string) bool {
+	if method == "" {
+		return false
 	}
+	for i := 0; i < len(method); i++ {
+		c := method[i]
+		if c <= ' ' || c == 0x7f {
+			return false
+		}
+	}
+	return true
 }

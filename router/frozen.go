@@ -7,15 +7,22 @@ import (
 )
 
 type FrozenRouter struct {
-	roots     map[string]*frozenNode
-	static    map[string]map[string]HandleFunc
-	hasParams map[string]bool
+	table     frozenTable
+	hosts     map[string]*frozenTable
 	paramPool sync.Pool
 	partsPool sync.Pool
 	rwPool    sync.Pool
 
 	NotFound         HandleFunc
 	MethodNotAllowed HandleFunc
+	PanicHandler     func(http.ResponseWriter, *http.Request, any)
+	IgnoreCase       bool
+}
+
+type frozenTable struct {
+	roots     map[string]*frozenNode
+	static    map[string]map[string]HandleFunc
+	hasParams map[string]bool
 }
 
 type frozenNode struct {
@@ -83,9 +90,8 @@ func (s *frozenStaticChildren) set(part string, child *frozenNode) {
 
 func NewFrozenRouter() *FrozenRouter {
 	fr := &FrozenRouter{
-		roots:     make(map[string]*frozenNode),
-		static:    make(map[string]map[string]HandleFunc),
-		hasParams: make(map[string]bool),
+		table: newFrozenTable(),
+		hosts: make(map[string]*frozenTable),
 	}
 	fr.paramPool = sync.Pool{
 		New: func() interface{} {
@@ -103,20 +109,44 @@ func NewFrozenRouter() *FrozenRouter {
 	return fr
 }
 
+func newFrozenTable() frozenTable {
+	return frozenTable{
+		roots:     make(map[string]*frozenNode),
+		static:    make(map[string]map[string]HandleFunc),
+		hasParams: make(map[string]bool),
+	}
+}
+
 func (r *Router) Freeze() (*FrozenRouter, error) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
 	fr := NewFrozenRouter()
-	fr.static = cloneStatic(r.static)
-	fr.hasParams = cloneHasParams(r.hasParams)
+	if ft := freezeTable(&r.table); ft != nil {
+		fr.table = *ft
+	}
+	for host, table := range r.hosts {
+		fr.hosts[host] = freezeTable(table)
+	}
+	fr.IgnoreCase = r.IgnoreCase
 	fr.NotFound = r.NotFound
 	fr.MethodNotAllowed = r.MethodNotAllowed
+	fr.PanicHandler = r.PanicHandler
 
-	for method, root := range r.roots {
-		fr.roots[method] = freezeRoot(root)
-	}
 	return fr, nil
+}
+
+func freezeTable(src *routeTable) *frozenTable {
+	if src == nil {
+		return nil
+	}
+	ft := newFrozenTable()
+	ft.static = cloneStatic(src.static)
+	ft.hasParams = cloneHasParams(src.hasParams)
+	for method, root := range src.roots {
+		ft.roots[method] = freezeRoot(root)
+	}
+	return &ft
 }
 
 func cloneStatic(src map[string]map[string]HandleFunc) map[string]map[string]HandleFunc {
@@ -256,9 +286,13 @@ func buildFrozenNode(n *node) *frozenNode {
 }
 
 func (r *FrozenRouter) getParts(path string) (*pathSegments, bool) {
+	return r.getPartsWithRaw(path, path)
+}
+
+func (r *FrozenRouter) getPartsWithRaw(path, raw string) (*pathSegments, bool) {
 	segs := r.partsPool.Get().(*pathSegments)
 
-	segs.path = path
+	segs.path = raw
 	segs.parts = segs.parts[:0]
 	segs.indices = segs.indices[:0]
 
@@ -285,7 +319,25 @@ func (r *FrozenRouter) getParts(path string) (*pathSegments, bool) {
 	return segs, true
 }
 
+func (r *FrozenRouter) tableForHost(host string) *frozenTable {
+	if host == "" {
+		return &r.table
+	}
+	if t, ok := r.hosts[host]; ok && t != nil {
+		return t
+	}
+	return &r.table
+}
+
 func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if r.PanicHandler != nil {
+		defer func() {
+			if rec := recover(); rec != nil {
+				r.PanicHandler(w, req, rec)
+			}
+		}()
+	}
+
 	if len(req.URL.Path) > MaxPathLength {
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
@@ -307,19 +359,26 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 
+	matchPath := cleaned
+	if r.IgnoreCase {
+		matchPath = lowerASCII(cleaned)
+	}
+	rawPath := cleaned
+	host := normalizeHost(req.Host)
+
 	method := req.Method
 	if method == http.MethodHead {
-		if r.serveMethod(w, req, http.MethodHead, cleaned) {
+		if r.serveMethod(w, req, http.MethodHead, matchPath, rawPath, host) {
 			return
 		}
 		method = http.MethodGet
 	}
 
-	if r.serveMethod(w, req, method, cleaned) {
+	if r.serveMethod(w, req, method, matchPath, rawPath, host) {
 		return
 	}
 
-	if allow, ok := r.allowedMethods(cleaned); ok {
+	if allow, ok := r.allowedMethods(matchPath, host); ok {
 		w.Header().Set("Allow", allow)
 		if req.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -340,20 +399,21 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, method, cleaned string) bool {
-	if m, ok := r.static[method]; ok {
-		if handler, ok := m[cleaned]; ok {
+func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath, host string) bool {
+	table := r.tableForHost(host)
+	if m, ok := table.static[method]; ok {
+		if handler, ok := m[matchPath]; ok {
 			handler(w, req)
 			return true
 		}
-		if !r.hasParams[method] {
+		if !table.hasParams[method] {
 			return false
 		}
-	} else if !r.hasParams[method] {
+	} else if !table.hasParams[method] {
 		return false
 	}
 
-	segs, ok := r.getParts(cleaned)
+	segs, ok := r.getPartsWithRaw(matchPath, rawPath)
 	if !ok {
 		return false
 	}
@@ -363,7 +423,7 @@ func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, met
 	}
 	cleanupParts := func() { r.partsPool.Put(segs) }
 
-	root, ok := r.roots[method]
+	root, ok := table.roots[method]
 	if !ok {
 		cleanupParts()
 		return false
@@ -401,32 +461,31 @@ func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, met
 	return false
 }
 
-func (r *FrozenRouter) allowedMethods(cleaned string) (string, bool) {
-	var mask uint8
+func (r *FrozenRouter) allowedMethods(matchPath, host string) (string, bool) {
+	table := r.tableForHost(host)
+	methods := make(map[string]struct{}, 8)
 
-	for method, m := range r.static {
+	for method, m := range table.static {
 		if m == nil {
 			continue
 		}
-		if _, ok := m[cleaned]; ok {
-			if bit, ok := methodBit(method); ok {
-				mask |= bit
-			}
+		if _, ok := m[matchPath]; ok {
+			methods[method] = struct{}{}
 		}
 	}
 
 	var segs *pathSegments
 	var segsOK bool
-	for method, has := range r.hasParams {
+	for method, has := range table.hasParams {
 		if !has {
 			continue
 		}
-		root := r.roots[method]
+		root := table.roots[method]
 		if root == nil {
 			continue
 		}
 		if segs == nil {
-			segs, segsOK = r.getParts(cleaned)
+			segs, segsOK = r.getParts(matchPath)
 			if !segsOK {
 				if segs != nil {
 					r.partsPool.Put(segs)
@@ -439,9 +498,7 @@ func (r *FrozenRouter) allowedMethods(cleaned string) (string, bool) {
 			}
 		}
 		if root.search(segs, 0, nil) != nil {
-			if bit, ok := methodBit(method); ok {
-				mask |= bit
-			}
+			methods[method] = struct{}{}
 		}
 	}
 
@@ -449,16 +506,15 @@ func (r *FrozenRouter) allowedMethods(cleaned string) (string, bool) {
 		r.partsPool.Put(segs)
 	}
 
-	if mask == 0 {
+	if len(methods) == 0 {
 		return "", false
 	}
-
-	if mask&methodBitGet != 0 {
-		mask |= methodBitHead
+	if _, ok := methods[http.MethodGet]; ok {
+		methods[http.MethodHead] = struct{}{}
 	}
-	mask |= methodBitOptions
+	methods[http.MethodOptions] = struct{}{}
 
-	return allowHeaderForMask(mask), true
+	return buildAllowHeader(methods), true
 }
 
 func (n *frozenNode) search(segs *pathSegments, height int, params *Params) *frozenNode {
@@ -511,7 +567,13 @@ func (n *frozenNode) search(segs *pathSegments, height int, params *Params) *fro
 		snapshot := 0
 		if params != nil {
 			snapshot = len(params.Keys)
-			params.Add(child.part[1:], part)
+			start := segs.indices[height]
+			end := start + len(parts[height])
+			value := part
+			if start >= 0 && end <= len(segs.path) {
+				value = segs.path[start:end]
+			}
+			params.Add(child.part[1:], value)
 		}
 		if res := child.search(segs, height+1, params); res != nil {
 			return res

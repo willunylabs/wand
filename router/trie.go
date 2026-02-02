@@ -265,7 +265,13 @@ func (n *node) search(segs *pathSegments, height int, params *Params) *node {
 		if params != nil {
 			snapshot = len(params.Keys)
 			// child.part looks like ":id"
-			params.Add(child.part[1:], part)
+			start := segs.indices[height]
+			end := start + len(parts[height])
+			value := part
+			if start >= 0 && end <= len(segs.path) {
+				value = segs.path[start:end]
+			}
+			params.Add(child.part[1:], value)
 		}
 
 		if res := child.search(segs, height+1, params); res != nil {
