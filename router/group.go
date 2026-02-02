@@ -32,6 +32,10 @@ func (r *Router) Host(host string) *Group {
 }
 
 // Group represents a nested routing group with its own prefix and middleware chain.
+// [Design Pattern: Composition]
+// Groups allow sharing configuration (middleware, layout) across multiple routes.
+// - Nested groups inherit parent middlewares (Parent -> Child -> Grandchild).
+// - Paths are joined efficiently (e.g. /v1 + /users = /v1/users).
 type Group struct {
 	router      *Router
 	host        string
@@ -49,6 +53,10 @@ func (g *Group) Use(mw ...Middleware) *Group {
 }
 
 // Group creates a nested group that inherits the parent's prefix and middlewares.
+// [Middleware Inheritance]:
+// We copy the parent's middleware slice to the new group.
+// This ensures that modifying the parent later doesn't affect the child (snapshot),
+// and modifying the child doesn't affect the parent (isolation).
 func (g *Group) Group(prefix string, mw ...Middleware) *Group {
 	combined := make([]Middleware, 0, len(g.middlewares)+len(mw))
 	combined = append(combined, g.middlewares...)

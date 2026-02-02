@@ -32,8 +32,12 @@ const (
 type RingBuffer struct {
 	// Producer Index (Atomic)
 	// Producers contend on this index to reserve slots.
+	// Producer Index (Atomic)
+	// Producers contend on this index to reserve slots.
 	head uint64
-	_    [56]byte // Padding: Ensures head is on its own cache line.
+	_    [56]byte // [Padding]: Ensures head is on its own cache line (64 bytes) to prevent "False Sharing".
+	// If head and tail were on the same cache line, a write to 'head' by a producer would invalid
+	// the cache line for the consumer reading 'tail', causing severe performance degradation.
 
 	// Consumer Index (Atomic)
 	// Consumer updates this index; producers read it to check for full.
@@ -83,6 +87,16 @@ func (rb *RingBuffer) Close() {
 // TryWrite attempts to write a log event into the buffer.
 // Returns false if the buffer is full (strategy: drop).
 // This is lock-free and thread-safe for multiple producers.
+// TryWrite attempts to write a log event into the buffer.
+// Returns false if the buffer is full (strategy: drop).
+// This is lock-free and thread-safe for multiple producers.
+//
+// [Algorithm: MPSC Lock-Free]
+// 1. Load Head & Tail to check capacity (loose check).
+// 2. CAS(head, old, old+1) to reserve a slot.
+// 3. If CAS succeeds, we own the slot. Check slot state to ensure previous consumer is done.
+// 4. Write data.
+// 5. Commit by setting state to 'Ready'.
 func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 	if atomic.LoadUint32(&rb.closed) != 0 {
 		return false

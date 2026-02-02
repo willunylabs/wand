@@ -14,6 +14,19 @@ import (
 
 const MaxPathLength = 4096 // Maximum path length (DoS protection).
 
+// --------------------------------------------------------------------------------
+// [Design Philosophy]
+//
+// Wand uses a "Zero Allocation" strategy for its hot paths (routing).
+// This is achieved by:
+// 1. sync.Pool: Reusing complex objects (Params, pathSegments).
+// 2. Trie: Using a prefix tree for O(k) lookups where k is path length.
+// 3. Flattening: Avoiding interface{} where possible (e.g., paramRW).
+//
+// The result is a router that generates 0 bytes of garbage for standard requests,
+// significantly reducing GC pressure in high-throughput microservices.
+// --------------------------------------------------------------------------------
+
 // HandleFunc defines the handler function type.
 type HandleFunc func(http.ResponseWriter, *http.Request)
 
@@ -51,12 +64,17 @@ type routeTable struct {
 // [Concurrency]: registration is serialized with an RWMutex; concurrent ServeHTTP is safe.
 // Run-time registration is supported but will block reads while the tree is updated.
 type Router struct {
-	mu        sync.RWMutex
-	table     routeTable
-	hosts     map[string]*routeTable // host -> routing table
-	paramPool sync.Pool              // pool for Params (Zero Alloc Params)
-	partsPool sync.Pool              // pool for pathSegments (Zero Alloc Split & Indices)
-	rwPool    sync.Pool              // pool for paramRW wrappers (Zero Alloc Wrapper)
+	mu    sync.RWMutex
+	table routeTable
+	hosts map[string]*routeTable // host -> routing table
+	// [Memory Optimization]
+	// We use sync.Pool to recycle objects. This dramatically reduces heap allocations.
+	// - paramPool: Recycles *Params objects (the map-like storage for :id, :user).
+	// - partsPool: Recycles *pathSegments (the slice of path parts used during search).
+	// - rwPool:    Recycles *paramRW (the http.ResponseWriter wrapper for capturing params).
+	paramPool sync.Pool // pool for Params (Zero Alloc Params)
+	partsPool sync.Pool // pool for pathSegments (Zero Alloc Split & Indices)
+	rwPool    sync.Pool // pool for paramRW wrappers (Zero Alloc Wrapper)
 
 	middlewares       []Middleware
 	routesCount       int

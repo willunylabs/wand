@@ -12,6 +12,10 @@ type node struct {
 	part    string // current segment: static "users", param ":id", wildcard "*filepath"
 
 	// Structured children (O(1) hot path + two pointers).
+	// [Design]: We use distinct fields for different node types to minimize pointer chasing and type assertions.
+	// - staticChildren: For exact string matches (e.g. "users").
+	// - paramChild:     For wildcard matches (e.g. ":id"). Only one per level allowed.
+	// - wildChild:      For catch-all matches (e.g. "*any"). Must be at the end.
 	staticChildren *staticChildren // static children: part -> *node
 	paramChild     *node           // param child (at most one per level)
 	wildChild      *node           // wildcard child (at most one per level; '*' must be last)
@@ -218,7 +222,15 @@ func (n *node) insert(pattern string, parts []string, height int, handler Handle
 }
 
 // search recursively matches a route (Static > Param > Wild).
-// [Optimization]: uses segs (*pathSegments) to bundle parts/indices/path.
+// [Algorithmic Detail]:
+// The search function uses recursion but relies on the `segs` struct to avoid string slicing.
+// At each level `height`, we look at `segs.parts[height]`.
+//
+// 1. Check Static Children: O(1) in map or O(N) in small slice.
+// 2. Check Param Child: matches anything except empty (unless wildcard involved).
+// 3. Check Wildcard Child: matches EVERYTHING remaining.
+//
+// Backtracking is implicitly handled by the order of checks. If Static fails, we try Param.
 func (n *node) search(segs *pathSegments, height int, params *Params) *node {
 	parts := segs.parts
 	if height > MaxDepth {

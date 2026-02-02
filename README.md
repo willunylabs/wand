@@ -11,6 +11,17 @@
 
 > **Wand** /wɒnd/ - A symbol of magic and control. Elegantly directing traffic with precision and speed.
 
+## Philosophy
+
+Wand is a **router**, not a framework. We believe:
+
+- 🎯 **Do One Thing Well**: Route HTTP requests efficiently, nothing more.
+- 🧩 **Compose, Don't Replace**: Integrate with Go's ecosystem instead of reinventing it.
+- ⚡ **Performance Matters**: Zero allocations on the hot path, but not at the cost of usability.
+- 📖 **Explicit Over Magic**: No reflection, no code generation, no surprises.
+
+If you need a batteries-included framework, consider Gin or Echo. If you want control, you're in the right place.
+
 ## Features
 
 - **Zero Allocation**: Optimized hot paths (static, dynamic, and wildcard routes) generate **0 bytes** of garbage per request.
@@ -93,12 +104,32 @@ func main() {
 }
 ```
 
+### Third-Party Middleware
+
+Wand uses standard `http.Handler` middleware signatures, so you can plug in any
+third-party middleware (JWT, OTEL, Prometheus, etc.) directly:
+
+```go
+// Example: third-party JWT middleware
+// jwtmw := somejwt.New(...)
+// _ = r.Use(jwtmw)
+```
+
 ## Components
 
 - `router`: Path-Segment Trie based, zero-alloc HTTP router.
 - `middleware`: Essential HTTP middlewares.
 - `logger`: Lock-free ring buffer logger for high-throughput scenarios.
 - `server`: Helpers for graceful server shutdown.
+
+## Non-Goals
+
+Wand will **not** include:
+
+- ❌ Certificate management (use `autocert`, Caddy, or your cloud provider)
+- ❌ A proprietary metrics system (use Prometheus/OTEL)
+- ❌ A full web framework (no ORM, no "App" struct, no magic)
+- ❌ Complex binding/validation (use `go-playground/validator`)
 
 ## Performance
 
