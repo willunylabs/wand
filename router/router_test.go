@@ -807,6 +807,51 @@ func TestRouter_HostWithPort(t *testing.T) {
 	}
 }
 
+func TestRouter_HostFallbackToDefault(t *testing.T) {
+	r := NewRouter()
+	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("default"))
+	})
+	api := r.Host("api.example.com")
+	if err := api.GET("/only-api", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("api"))
+	}); err != nil {
+		t.Fatalf("host register failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/ping", nil)
+	req.Host = "api.example.com"
+	r.ServeHTTP(rec, req)
+	if rec.Body.String() != "default" {
+		t.Fatalf("expected default fallback, got %q", rec.Body.String())
+	}
+}
+
+func TestRouter_HostMethodNotAllowedOverridesDefault(t *testing.T) {
+	r := NewRouter()
+	mustGET(t, r, "/login", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("default"))
+	})
+	api := r.Host("api.example.com")
+	if err := api.POST("/login", func(w http.ResponseWriter, req *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}); err != nil {
+		t.Fatalf("host register failed: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.Host = "api.example.com"
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("expected 405, got %d", rec.Code)
+	}
+	if allow := rec.Header().Get("Allow"); allow != "OPTIONS, POST" && allow != "POST, OPTIONS" {
+		t.Fatalf("unexpected Allow header: %q", allow)
+	}
+}
+
 func TestRouter_CustomMethod(t *testing.T) {
 	r := NewRouter()
 	if err := r.Handle("PURGE", "/cache", func(w http.ResponseWriter, req *http.Request) {

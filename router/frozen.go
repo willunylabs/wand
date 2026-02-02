@@ -128,7 +128,11 @@ func (r *Router) Freeze() (*FrozenRouter, error) {
 	for host, table := range r.hosts {
 		fr.hosts[host] = freezeTable(table)
 	}
-	fr.IgnoreCase = r.IgnoreCase
+	if r.ignoreCaseSet {
+		fr.IgnoreCase = r.ignoreCaseEnabled
+	} else {
+		fr.IgnoreCase = r.IgnoreCase
+	}
 	fr.NotFound = r.NotFound
 	fr.MethodNotAllowed = r.MethodNotAllowed
 	fr.PanicHandler = r.PanicHandler
@@ -367,18 +371,35 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	host := normalizeHost(req.Host)
 
 	method := req.Method
-	if method == http.MethodHead {
-		if r.serveMethod(w, req, http.MethodHead, matchPath, rawPath, host) {
+
+	hostTable := r.tableForHost(host)
+	hasHost := host != "" && hostTable != &r.table
+	defaultTable := &r.table
+
+	if hasHost {
+		if r.serveInTable(w, req, method, matchPath, rawPath, hostTable) {
 			return
 		}
-		method = http.MethodGet
+		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
+			w.Header().Set("Allow", allow)
+			if req.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.MethodNotAllowed != nil {
+				r.MethodNotAllowed(w, req)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
-	if r.serveMethod(w, req, method, matchPath, rawPath, host) {
+	if r.serveInTable(w, req, method, matchPath, rawPath, defaultTable) {
 		return
 	}
 
-	if allow, ok := r.allowedMethods(matchPath, host); ok {
+	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
 		w.Header().Set("Allow", allow)
 		if req.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -399,8 +420,17 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath, host string) bool {
-	table := r.tableForHost(host)
+func (r *FrozenRouter) serveInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *frozenTable) bool {
+	if method == http.MethodHead {
+		if r.serveMethodInTable(w, req, http.MethodHead, matchPath, rawPath, table) {
+			return true
+		}
+		return r.serveMethodInTable(w, req, http.MethodGet, matchPath, rawPath, table)
+	}
+	return r.serveMethodInTable(w, req, method, matchPath, rawPath, table)
+}
+
+func (r *FrozenRouter) serveMethodInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *frozenTable) bool {
 	if m, ok := table.static[method]; ok {
 		if handler, ok := m[matchPath]; ok {
 			handler(w, req)
@@ -461,8 +491,7 @@ func (r *FrozenRouter) serveMethod(w http.ResponseWriter, req *http.Request, met
 	return false
 }
 
-func (r *FrozenRouter) allowedMethods(matchPath, host string) (string, bool) {
-	table := r.tableForHost(host)
+func (r *FrozenRouter) allowedMethodsInTable(matchPath string, table *frozenTable) (string, bool) {
 	methods := make(map[string]struct{}, 8)
 
 	for method, m := range table.static {

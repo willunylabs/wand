@@ -58,12 +58,14 @@ type Router struct {
 	partsPool sync.Pool              // pool for pathSegments (Zero Alloc Split & Indices)
 	rwPool    sync.Pool              // pool for paramRW wrappers (Zero Alloc Wrapper)
 
-	middlewares      []Middleware
-	routesCount      int
-	IgnoreCase       bool
-	NotFound         HandleFunc
-	MethodNotAllowed HandleFunc
-	PanicHandler     func(http.ResponseWriter, *http.Request, any)
+	middlewares       []Middleware
+	routesCount       int
+	ignoreCaseSet     bool
+	ignoreCaseEnabled bool
+	IgnoreCase        bool
+	NotFound          HandleFunc
+	MethodNotAllowed  HandleFunc
+	PanicHandler      func(http.ResponseWriter, *http.Request, any)
 }
 
 // pathSegments holds path segments and original indices.
@@ -266,14 +268,27 @@ func (r *Router) tableForHostLocked(host string) *routeTable {
 	return t
 }
 
-func (r *Router) tableForHostRLocked(host string) *routeTable {
-	if host == "" {
-		return &r.table
+func (r *Router) ignoreCaseActive() bool {
+	r.mu.RLock()
+	if r.ignoreCaseSet {
+		v := r.ignoreCaseEnabled
+		r.mu.RUnlock()
+		return v
 	}
-	if t, ok := r.hosts[host]; ok {
-		return t
+	v := r.IgnoreCase
+	r.mu.RUnlock()
+	return v
+}
+
+func (r *Router) lockIgnoreCase() bool {
+	r.mu.Lock()
+	if !r.ignoreCaseSet {
+		r.ignoreCaseEnabled = r.IgnoreCase
+		r.ignoreCaseSet = true
 	}
-	return &r.table
+	v := r.ignoreCaseEnabled
+	r.mu.Unlock()
+	return v
 }
 
 // resetParamRW resets paramRW for reuse.
@@ -316,9 +331,10 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 		return err
 	}
 
+	ignoreCase := r.lockIgnoreCase()
 	matchPattern := cleaned
 	matchParts := segs.parts
-	if r.IgnoreCase {
+	if ignoreCase {
 		trailingSlash := len(cleaned) > 1 && cleaned[len(cleaned)-1] == '/'
 		matchParts = make([]string, len(segs.parts))
 		for i, part := range segs.parts {
@@ -490,25 +506,53 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	}
 
 	matchPath := cleaned
-	if r.IgnoreCase {
+	if r.ignoreCaseActive() {
 		matchPath = lowerASCII(cleaned)
 	}
 	rawPath := cleaned
 	host := normalizeHost(req.Host)
 
 	method := req.Method
-	if method == http.MethodHead {
-		if r.serveMethod(w, req, http.MethodHead, matchPath, rawPath, host) {
+
+	var hostTable *routeTable
+	hasHost := false
+	r.mu.RLock()
+	if host != "" {
+		if t, ok := r.hosts[host]; ok {
+			hostTable = t
+			hasHost = true
+		}
+	}
+	if hostTable == nil {
+		hostTable = &r.table
+	}
+	defaultTable := &r.table
+	r.mu.RUnlock()
+
+	if hasHost {
+		if r.serveInTable(w, req, method, matchPath, rawPath, hostTable) {
 			return
 		}
-		method = http.MethodGet
+		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
+			w.Header().Set("Allow", allow)
+			if req.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.MethodNotAllowed != nil {
+				r.MethodNotAllowed(w, req)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
-	if r.serveMethod(w, req, method, matchPath, rawPath, host) {
+	if r.serveInTable(w, req, method, matchPath, rawPath, defaultTable) {
 		return
 	}
 
-	if allow, ok := r.allowedMethods(matchPath, host); ok {
+	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
 		w.Header().Set("Allow", allow)
 		if req.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusOK)
@@ -529,9 +573,18 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	http.NotFound(w, req)
 }
 
-func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath, host string) bool {
+func (r *Router) serveInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *routeTable) bool {
+	if method == http.MethodHead {
+		if r.serveMethodInTable(w, req, http.MethodHead, matchPath, rawPath, table) {
+			return true
+		}
+		return r.serveMethodInTable(w, req, http.MethodGet, matchPath, rawPath, table)
+	}
+	return r.serveMethodInTable(w, req, method, matchPath, rawPath, table)
+}
+
+func (r *Router) serveMethodInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *routeTable) bool {
 	r.mu.RLock()
-	table := r.tableForHostRLocked(host)
 	if m, ok := table.static[method]; ok {
 		if handler, ok := m[matchPath]; ok {
 			r.mu.RUnlock()
@@ -599,10 +652,8 @@ func (r *Router) serveMethod(w http.ResponseWriter, req *http.Request, method, m
 	return false
 }
 
-func (r *Router) allowedMethods(matchPath, host string) (string, bool) {
+func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (string, bool) {
 	r.mu.RLock()
-	table := r.tableForHostRLocked(host)
-
 	methods := make(map[string]struct{}, 8)
 	for method, m := range table.static {
 		if m == nil {
