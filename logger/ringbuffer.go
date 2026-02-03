@@ -169,17 +169,26 @@ func (rb *RingBuffer) Consume(handler func([]LogEvent)) {
 			}
 
 			if available > 0 {
-				// Case A: No wrap-around in batch
+				// Batch consumption with proper wrap-around handling
 				nextSlot := slotIdx
 				endSlot := (curr + available) & rb.mask
 
 				if endSlot > nextSlot {
-					// Contiguous
+					// Contiguous: no wrap-around
 					consumeBatch(handler, rb.data[nextSlot:endSlot])
+				} else if endSlot < nextSlot {
+					// Wrap-around: spans end of buffer and beginning
+					consumeBatch(handler, rb.data[nextSlot:])
+					if endSlot > 0 {
+						consumeBatch(handler, rb.data[:endSlot])
+					}
 				} else {
-					// Wraps around
-					consumeBatch(handler, rb.data[nextSlot:rb.Cap()])
-					consumeBatch(handler, rb.data[0:endSlot])
+					// endSlot == nextSlot: full buffer wrap (available == capacity)
+					// This means we need to consume from nextSlot to end, then 0 to nextSlot
+					consumeBatch(handler, rb.data[nextSlot:])
+					if nextSlot > 0 {
+						consumeBatch(handler, rb.data[:nextSlot])
+					}
 				}
 
 				// Commit consumption

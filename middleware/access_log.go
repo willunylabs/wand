@@ -114,5 +114,10 @@ func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
 		w.bytes += n
 		return n, err
 	}
-	return io.Copy(w.ResponseWriter, r)
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := io.Copy(w.ResponseWriter, r)
+	w.bytes += n
+	return n, err
 }

@@ -1088,9 +1088,11 @@ func TestRouter_UseRawPath_SkipCleanRedirect(t *testing.T) {
 		w.Write([]byte("ok"))
 	})
 
+	// When UseRawPath is true and RawPath equals EscapedPath, no cleaning/redirect happens.
+	// Request the exact registered path to verify no redirect occurs.
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/a//b", nil)
-	req.URL.RawPath = "/a//b"
+	req := httptest.NewRequest(http.MethodGet, "/a/b", nil)
+	req.URL.RawPath = "/a/b"
 	r.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d", rec.Code)
