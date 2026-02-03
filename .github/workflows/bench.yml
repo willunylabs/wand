@@ -1,0 +1,28 @@
+name: bench
+
+on:
+  schedule:
+    - cron: "0 2 * * 1" # weekly, Monday 02:00 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  bench:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.23.x'
+          cache: false
+      - name: Bench
+        run: ./scripts/bench.sh
+      - name: Compare (if baseline present)
+        run: ./scripts/bench-compare.sh
+      - name: Upload results
+        uses: actions/upload-artifact@v4
+        with:
+          name: bench-results
+          path: benchmarks/latest.txt

@@ -26,6 +26,9 @@ func AccessLog(rb *logger.RingBuffer, next http.Handler) http.Handler {
 
 		status := sw.status
 		bytes := sw.bytes
+		sw.ResponseWriter = nil
+		sw.status = 0
+		sw.bytes = 0
 		statusWriterPool.Put(sw)
 		if status == 0 {
 			status = http.StatusOK

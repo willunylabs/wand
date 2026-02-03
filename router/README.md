@@ -14,6 +14,8 @@ Wand Router is a blazing fast, zero-allocation HTTP router kernel for Go, built 
 - **Fail-Fast**: Returns explicit errors during registration instead of runtime panics.
 - **Standard Compatible**: Fully compatible with `net/http` (`http.Handler`, `http.ResponseWriter`).
 - **Method Semantics**: Automatic `HEAD` fallback to `GET`, `OPTIONS` with `Allow`, and `405 Method Not Allowed` with `Allow`.
+- **Strict Slash (Default: on)**: Redirects `/path` <-> `/path/` to the registered canonical path.
+- **UseRawPath (Optional)**: Match on encoded paths and return encoded params. When `RawPath` is valid, matching skips decoded-path cleaning/redirects; invalid `RawPath` falls back to `Path`.
 - **DoS Protection**: Enforces maximum path depth and path length.
 - **Frozen Router**: Immutable, compacted static chains with fast span comparisons (Radix-like path compression).
 
@@ -47,7 +49,8 @@ We achieve **strict zero-allocation** through aggressive object pooling and sent
 
 - **`sync.Pool` for Context**: Request contexts (`Params` container) are pooled.
 - **`sync.Pool` for Segments**: Path splitting does not allocate new strings. We use a pooled `pathSegments` struct that stores:
-  - Original `path` string.
+  - Original `path` string (for param extraction).
+  - Normalized `match` string (for matching, e.g., lowercased).
   - `indices` slice pointing to segment starts.
 - **Sentinel Optimization**: The `indices` slice always contains a sentinel `len(path)` at the end. This allows O(1) wildcard capturing by slicing the original path string directly (`path[indices[i]:]`) without bounds checking branches.
 
@@ -63,7 +66,7 @@ if !node.hasParams {
 ### 4. Frozen Router (Path Compression)
 `Freeze()` builds an immutable router with compressed static chains:
 - Consecutive static segments are joined into a single span (`"a/b/c"`).
-- Matching uses a single string compare on the original path substring.
+- Matching uses a single string compare on the normalized path substring.
 - Ideal for production deployments where routes are finalized at startup.
 
 ## Usage

@@ -267,6 +267,84 @@ func TestRouter_StaticNotWrapped(t *testing.T) {
 	}
 }
 
+func TestRouter_Static_TrailingSlashEquivalent(t *testing.T) {
+	cases := []struct {
+		pattern string
+		request string
+	}{
+		{"/static/path", "/static/path/"},
+		{"/static/path/", "/static/path"},
+	}
+
+	for _, tc := range cases {
+		r := NewRouter()
+		r.StrictSlash = false
+		mustGET(t, r, tc.pattern, func(w http.ResponseWriter, req *http.Request) {
+			w.Write([]byte("ok"))
+		})
+
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, tc.request, nil)
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("pattern %q request %q: expected 200 got %d", tc.pattern, tc.request, rec.Code)
+		}
+		if rec.Body.String() != "ok" {
+			t.Fatalf("pattern %q request %q: expected body ok got %q", tc.pattern, tc.request, rec.Body.String())
+		}
+
+		fr := mustFreeze(t, r)
+		rec = httptest.NewRecorder()
+		req = httptest.NewRequest(http.MethodGet, tc.request, nil)
+		fr.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("frozen pattern %q request %q: expected 200 got %d", tc.pattern, tc.request, rec.Code)
+		}
+		if rec.Body.String() != "ok" {
+			t.Fatalf("frozen pattern %q request %q: expected body ok got %q", tc.pattern, tc.request, rec.Body.String())
+		}
+	}
+}
+
+func TestRouter_StrictSlash_Redirect(t *testing.T) {
+	r := NewRouter()
+	r.StrictSlash = true
+	mustGET(t, r, "/a/", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("ok"))
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/a", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/a/" {
+		t.Fatalf("expected Location /a/, got %q", loc)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/a", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPermanentRedirect {
+		t.Fatalf("expected 308, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/a/" {
+		t.Fatalf("expected Location /a/, got %q", loc)
+	}
+
+	fr := mustFreeze(t, r)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/a", nil)
+	fr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("frozen expected 301, got %d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/a/" {
+		t.Fatalf("frozen expected Location /a/, got %q", loc)
+	}
+}
+
 func TestRouter_DuplicateParamName(t *testing.T) {
 	r := NewRouter()
 	if err := r.GET("/users/:id/orders/:id", func(w http.ResponseWriter, req *http.Request) {}); err == nil {
@@ -931,6 +1009,97 @@ func TestFrozenRouter_IgnoreCaseAndHost(t *testing.T) {
 	fr.ServeHTTP(rec, req)
 	if rec.Body.String() != "AbC" {
 		t.Fatalf("expected AbC, got %q", rec.Body.String())
+	}
+}
+
+func TestFrozenRouter_IgnoreCase_StaticSpan(t *testing.T) {
+	r := NewRouter()
+	r.IgnoreCase = true
+	mustGET(t, r, "/Users/List", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("ok"))
+	})
+	fr := mustFreeze(t, r)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/USERS/LIST", nil)
+	fr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("expected body ok, got %q", rec.Body.String())
+	}
+}
+
+func TestRouter_UseRawPath_EncodedParam(t *testing.T) {
+	r := NewRouter()
+	r.UseRawPath = true
+	mustGET(t, r, "/files/:name", func(w http.ResponseWriter, req *http.Request) {
+		name, _ := Param(w, "name")
+		w.Write([]byte(name))
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil)
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "a%2Fb" {
+		t.Fatalf("expected encoded param, got %q", rec.Body.String())
+	}
+
+	fr := mustFreeze(t, r)
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/files/a%2Fb", nil)
+	fr.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("frozen expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "a%2Fb" {
+		t.Fatalf("frozen expected encoded param, got %q", rec.Body.String())
+	}
+}
+
+func TestRouter_UseRawPath_InvalidFallback(t *testing.T) {
+	r := NewRouter()
+	r.UseRawPath = true
+	mustGET(t, r, "/files/:name", func(w http.ResponseWriter, req *http.Request) {
+		name, _ := Param(w, "name")
+		w.Write([]byte(name))
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/files/ok", nil)
+	req.URL.RawPath = "/files/%2"
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("expected decoded param on fallback, got %q", rec.Body.String())
+	}
+}
+
+func TestRouter_UseRawPath_SkipCleanRedirect(t *testing.T) {
+	r := NewRouter()
+	r.UseRawPath = true
+	mustGET(t, r, "/a/b", func(w http.ResponseWriter, req *http.Request) {
+		w.Write([]byte("ok"))
+	})
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/a//b", nil)
+	req.URL.RawPath = "/a//b"
+	r.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Fatalf("expected no redirect, got Location %q", rec.Header().Get("Location"))
+	}
+	if rec.Body.String() != "ok" {
+		t.Fatalf("expected ok, got %q", rec.Body.String())
 	}
 }
 

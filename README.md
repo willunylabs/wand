@@ -35,6 +35,8 @@ If you need a batteries-included framework, consider Gin or Echo. If you want co
 - **Minimalist Middleware**: Includes essential middlewares (Recovery, RequestID, AccessLog, Timeout, BodySizeLimit).
 - **Pre-composed Middleware**: `Router.Use` and `Group` build middleware chains at registration time (no per-request wrapping).
 - **Custom 404/405**: Optional `NotFound` and `MethodNotAllowed` handlers.
+- **Strict Slash (Default: on)**: Redirects `/path` <-> `/path/` to the registered canonical path.
+- **UseRawPath (Optional)**: Match on encoded paths and return encoded params. When `RawPath` is valid, matching skips decoded-path cleaning/redirects; invalid `RawPath` falls back to `Path`.
 
 ## Installation
 
@@ -151,6 +153,13 @@ Run on Apple M4 Pro (Go 1.23).
 > **(2)**: Latency (ns/op) (lower is better)
 > **(3)**: Heap Memory (B/op) (lower is better)
 > **(4)**: Allocations (allocs/op) (lower is better)
+
+## Quality Gates
+
+- CI: build, `go vet`, tests, and race (`.github/workflows/ci.yml`).
+- Lint: `golangci-lint` (`.github/workflows/linter.yml`).
+- Scheduled fuzz/bench: `.github/workflows/fuzz.yml`, `.github/workflows/bench.yml`.
+- Benchmark regression gate: `benchmarks/baseline.txt` + `BENCH_MAX_REGRESSION_PCT` (see `benchmarks/README.md`).
 
 
 ## License

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"path"
 	"sort"
 	"strings"
@@ -81,6 +82,8 @@ type Router struct {
 	ignoreCaseSet     bool
 	ignoreCaseEnabled bool
 	IgnoreCase        bool
+	StrictSlash       bool
+	UseRawPath        bool
 	NotFound          HandleFunc
 	MethodNotAllowed  HandleFunc
 	PanicHandler      func(http.ResponseWriter, *http.Request, any)
@@ -90,8 +93,9 @@ type Router struct {
 // [Optimization]: supports O(1) wildcard slicing without allocations.
 type pathSegments struct {
 	path    string   // original path (for wildcard slicing)
+	match   string   // normalized path used for matching (e.g., lowercased)
 	parts   []string // split segments
-	indices []int    // start index of each segment in the original path
+	indices []int    // start index of each segment in the normalized path
 }
 
 // paramRW wraps http.ResponseWriter.
@@ -149,6 +153,8 @@ func NewRouter() *Router {
 			hasParams: make(map[string]bool),
 		},
 		hosts: make(map[string]*routeTable),
+		// Best-practice default: normalize trailing slashes with redirects.
+		StrictSlash: true,
 		paramPool: sync.Pool{
 			New: func() interface{} {
 				return &Params{
@@ -184,7 +190,8 @@ func (r *Router) getParts(path string) (*pathSegments, bool) {
 func (r *Router) getPartsWithRaw(path, raw string) (*pathSegments, bool) {
 	segs := r.partsPool.Get().(*pathSegments)
 
-	segs.path = raw // store original path
+	segs.path = raw   // store original path
+	segs.match = path // store normalized path used for indices
 	// Reset slices (keep capacity)
 	segs.parts = segs.parts[:0]
 	segs.indices = segs.indices[:0]
@@ -230,6 +237,43 @@ func cleanPath(p string) string {
 		cp += "/"
 	}
 	return cp
+}
+
+func altTrailingSlash(p string) string {
+	if p == "/" {
+		return ""
+	}
+	if strings.HasSuffix(p, "/") {
+		return strings.TrimSuffix(p, "/")
+	}
+	return p + "/"
+}
+
+func redirectToPath(w http.ResponseWriter, req *http.Request, path string) {
+	u := *req.URL
+	u.Path = path
+	u.RawPath = ""
+	code := http.StatusMovedPermanently
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		code = http.StatusPermanentRedirect
+	}
+	http.Redirect(w, req, u.String(), code)
+}
+
+func redirectToRawPath(w http.ResponseWriter, req *http.Request, raw string) {
+	u := *req.URL
+	u.RawPath = raw
+	if decoded, err := neturl.PathUnescape(raw); err == nil {
+		u.Path = decoded
+	} else {
+		u.Path = raw
+		u.RawPath = ""
+	}
+	code := http.StatusMovedPermanently
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		code = http.StatusPermanentRedirect
+	}
+	http.Redirect(w, req, u.String(), code)
 }
 
 func lowerASCII(s string) string {
@@ -502,32 +546,44 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
+	useRaw := r.UseRawPath && req.URL.RawPath != "" && req.URL.RawPath == req.URL.EscapedPath()
 	if len(req.URL.Path) > MaxPathLength {
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
 	}
-	cleaned := cleanPath(req.URL.Path)
-	if len(cleaned) > MaxPathLength {
+	if useRaw && len(req.URL.RawPath) > MaxPathLength {
 		w.WriteHeader(http.StatusRequestURITooLong)
 		return
 	}
-	if cleaned != req.URL.Path {
-		url := *req.URL
-		url.Path = cleaned
-		url.RawPath = ""
-		code := http.StatusMovedPermanently
-		if req.Method != http.MethodGet && req.Method != http.MethodHead {
-			code = http.StatusPermanentRedirect
+
+	cleaned := req.URL.Path
+	if !useRaw {
+		cleaned = cleanPath(req.URL.Path)
+		if len(cleaned) > MaxPathLength {
+			w.WriteHeader(http.StatusRequestURITooLong)
+			return
 		}
-		http.Redirect(w, req, url.String(), code)
-		return
+		if cleaned != req.URL.Path {
+			redirectToPath(w, req, cleaned)
+			return
+		}
 	}
 
 	matchPath := cleaned
-	if r.ignoreCaseActive() {
-		matchPath = lowerASCII(cleaned)
+	paramPath := cleaned
+	redirectFn := redirectToPath
+	if useRaw {
+		matchPath = req.URL.RawPath
+		paramPath = req.URL.RawPath
+		redirectFn = redirectToRawPath
 	}
-	rawPath := cleaned
+	if r.ignoreCaseActive() {
+		matchPath = lowerASCII(matchPath)
+	}
+	altMatch := altTrailingSlash(matchPath)
+	altParam := altTrailingSlash(paramPath)
+	altRedirect := altTrailingSlash(paramPath)
+	altOK := altMatch != "" && altMatch != matchPath
 	host := normalizeHost(req.Host)
 
 	method := req.Method
@@ -548,8 +604,20 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	r.mu.RUnlock()
 
 	if hasHost {
-		if r.serveInTable(w, req, method, matchPath, rawPath, hostTable) {
+		if r.serveInTable(w, req, method, matchPath, paramPath, hostTable) {
 			return
+		}
+		if r.StrictSlash {
+			if altOK && altRedirect != "" {
+				if _, ok := r.allowedMethodsInTable(altMatch, hostTable); ok {
+					redirectFn(w, req, altRedirect)
+					return
+				}
+			}
+		} else {
+			if altOK && r.serveInTable(w, req, method, altMatch, altParam, hostTable) {
+				return
+			}
 		}
 		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
 			w.Header().Set("Allow", allow)
@@ -563,11 +631,37 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 			}
 			w.WriteHeader(http.StatusMethodNotAllowed)
 			return
+		} else if !r.StrictSlash && altOK {
+			if allow, ok := r.allowedMethodsInTable(altMatch, hostTable); ok {
+				w.Header().Set("Allow", allow)
+				if req.Method == http.MethodOptions {
+					w.WriteHeader(http.StatusOK)
+					return
+				}
+				if r.MethodNotAllowed != nil {
+					r.MethodNotAllowed(w, req)
+					return
+				}
+				w.WriteHeader(http.StatusMethodNotAllowed)
+				return
+			}
 		}
 	}
 
-	if r.serveInTable(w, req, method, matchPath, rawPath, defaultTable) {
+	if r.serveInTable(w, req, method, matchPath, paramPath, defaultTable) {
 		return
+	}
+	if r.StrictSlash {
+		if altOK && altRedirect != "" {
+			if _, ok := r.allowedMethodsInTable(altMatch, defaultTable); ok {
+				redirectFn(w, req, altRedirect)
+				return
+			}
+		}
+	} else {
+		if altOK && r.serveInTable(w, req, method, altMatch, altParam, defaultTable) {
+			return
+		}
 	}
 
 	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
@@ -582,6 +676,20 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}
 		w.WriteHeader(http.StatusMethodNotAllowed)
 		return
+	} else if !r.StrictSlash && altOK {
+		if allow, ok := r.allowedMethodsInTable(altMatch, defaultTable); ok {
+			w.Header().Set("Allow", allow)
+			if req.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusOK)
+				return
+			}
+			if r.MethodNotAllowed != nil {
+				r.MethodNotAllowed(w, req)
+				return
+			}
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			return
+		}
 	}
 
 	if r.NotFound != nil {

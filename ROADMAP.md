@@ -26,6 +26,11 @@ Wand is a **router**, not a framework. We believe:
 - [x] **Case-Insensitive Matching**:
     - Distinct opt-in setting (`Router.IgnoreCase`).
     - Define behavior for path cleaning and redirects.
+- [x] **Strict Slash Normalization**:
+    - Redirects `/path` <-> `/path/` to the canonical path (default on).
+- [x] **Encoded Path Matching (Optional)**:
+    - `UseRawPath` for matching encoded paths and returning encoded params.
+    - Falls back to decoded `Path` when `RawPath` is invalid.
 - [x] **Router-level Panic Handler**:
     - A lightweight simple fallback for unhandled panics (distinct from middleware.Recovery).
 
