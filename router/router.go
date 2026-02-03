@@ -6,6 +6,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	neturl "net/url"
 	"path"
 	"sort"
 	"strings"
@@ -81,6 +82,8 @@ type Router struct {
 	ignoreCaseSet     bool
 	ignoreCaseEnabled bool
 	IgnoreCase        bool
+	StrictSlash       bool
+	UseRawPath        bool
 	NotFound          HandleFunc
 	MethodNotAllowed  HandleFunc
 	PanicHandler      func(http.ResponseWriter, *http.Request, any)
@@ -90,8 +93,9 @@ type Router struct {
 // [Optimization]: supports O(1) wildcard slicing without allocations.
 type pathSegments struct {
 	path    string   // original path (for wildcard slicing)
+	match   string   // normalized path used for matching (e.g., lowercased)
 	parts   []string // split segments
-	indices []int    // start index of each segment in the original path
+	indices []int    // start index of each segment in the normalized path
 }
 
 // paramRW wraps http.ResponseWriter.
@@ -149,6 +153,8 @@ func NewRouter() *Router {
 			hasParams: make(map[string]bool),
 		},
 		hosts: make(map[string]*routeTable),
+		// Best-practice default: normalize trailing slashes with redirects.
+		StrictSlash: true,
 		paramPool: sync.Pool{
 			New: func() interface{} {
 				return &Params{
@@ -184,7 +190,8 @@ func (r *Router) getParts(path string) (*pathSegments, bool) {
 func (r *Router) getPartsWithRaw(path, raw string) (*pathSegments, bool) {
 	segs := r.partsPool.Get().(*pathSegments)
 
-	segs.path = raw // store original path
+	segs.path = raw   // store original path
+	segs.match = path // store normalized path used for indices
 	// Reset slices (keep capacity)
 	segs.parts = segs.parts[:0]
 	segs.indices = segs.indices[:0]
@@ -230,6 +237,33 @@ func cleanPath(p string) string {
 		cp += "/"
 	}
 	return cp
+}
+
+func redirectToPath(w http.ResponseWriter, req *http.Request, path string) {
+	u := *req.URL
+	u.Path = path
+	u.RawPath = ""
+	code := http.StatusMovedPermanently
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		code = http.StatusPermanentRedirect
+	}
+	http.Redirect(w, req, u.String(), code)
+}
+
+func redirectToRawPath(w http.ResponseWriter, req *http.Request, raw string) {
+	u := *req.URL
+	u.RawPath = raw
+	if decoded, err := neturl.PathUnescape(raw); err == nil {
+		u.Path = decoded
+	} else {
+		u.Path = raw
+		u.RawPath = ""
+	}
+	code := http.StatusMovedPermanently
+	if req.Method != http.MethodGet && req.Method != http.MethodHead {
+		code = http.StatusPermanentRedirect
+	}
+	http.Redirect(w, req, u.String(), code)
 }
 
 func lowerASCII(s string) string {
@@ -502,35 +536,12 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	if len(req.URL.Path) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
-	}
-	cleaned := cleanPath(req.URL.Path)
-	if len(cleaned) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
-	}
-	if cleaned != req.URL.Path {
-		url := *req.URL
-		url.Path = cleaned
-		url.RawPath = ""
-		code := http.StatusMovedPermanently
-		if req.Method != http.MethodGet && req.Method != http.MethodHead {
-			code = http.StatusPermanentRedirect
-		}
-		http.Redirect(w, req, url.String(), code)
-		return
+	ctx, ok := prepareRouteContext(w, req, r.UseRawPath, r.ignoreCaseActive())
+	if !ok {
+		return // Already responded (redirect or error)
 	}
 
-	matchPath := cleaned
-	if r.ignoreCaseActive() {
-		matchPath = lowerASCII(cleaned)
-	}
-	rawPath := cleaned
 	host := normalizeHost(req.Host)
-
-	method := req.Method
 
 	var hostTable *routeTable
 	hasHost := false
@@ -547,40 +558,27 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	defaultTable := &r.table
 	r.mu.RUnlock()
 
+	// Try host-specific table first
 	if hasHost {
-		if r.serveInTable(w, req, method, matchPath, rawPath, hostTable) {
+		if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, hostTable) {
 			return
 		}
-		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
-			w.Header().Set("Allow", allow)
-			if req.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			if r.MethodNotAllowed != nil {
-				r.MethodNotAllowed(w, req)
-				return
-			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if r.tryAlternateSlashInTable(w, req, ctx, hostTable) {
+			return
+		}
+		if r.handleMethodNotAllowedInTable(w, req, ctx, hostTable) {
 			return
 		}
 	}
 
-	if r.serveInTable(w, req, method, matchPath, rawPath, defaultTable) {
+	// Try default table
+	if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, defaultTable) {
 		return
 	}
-
-	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
-		w.Header().Set("Allow", allow)
-		if req.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if r.MethodNotAllowed != nil {
-			r.MethodNotAllowed(w, req)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if r.tryAlternateSlashInTable(w, req, ctx, defaultTable) {
+		return
+	}
+	if r.handleMethodNotAllowedInTable(w, req, ctx, defaultTable) {
 		return
 	}
 
@@ -589,6 +587,39 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	http.NotFound(w, req)
+}
+
+func (r *Router) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *routeTable) bool {
+	altMatch, ok := alternatePath(ctx.matchPath)
+	if !ok || altMatch == ctx.matchPath {
+		return false
+	}
+	if r.StrictSlash {
+		if _, ok := r.allowedMethodsInTable(altMatch, table); ok {
+			altRedirect, ok := alternatePath(ctx.paramPath)
+			if ok && altRedirect != "" {
+				ctx.redirectFn(w, req, altRedirect)
+				return true
+			}
+		}
+		return false
+	}
+	altParam, _ := alternatePath(ctx.paramPath)
+	return r.serveInTable(w, req, ctx.method, altMatch, altParam, table)
+}
+
+func (r *Router) handleMethodNotAllowedInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *routeTable) bool {
+	if allow, ok := r.allowedMethodsInTable(ctx.matchPath, table); ok {
+		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+	}
+	if !r.StrictSlash {
+		if altMatch, ok := alternatePath(ctx.matchPath); ok {
+			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
+				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+			}
+		}
+	}
+	return false
 }
 
 func (r *Router) serveInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *routeTable) bool {

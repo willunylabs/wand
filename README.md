@@ -7,6 +7,8 @@
 
 **High-Performance, Zero-Allocation HTTP Router for Go**
 
+**Go version**: 1.24.12+ (patched standard library).
+
 `wand` is a minimalist, infrastructure-grade HTTP router and toolkit designed for services where latency and memory efficiency are critical. It features a lock-free design, zero-allocation routing paths, and effective DoS protection.
 
 > **Wand** /wɒnd/ - A symbol of magic and control. Elegantly directing traffic with precision and speed.
@@ -32,9 +34,11 @@ If you need a batteries-included framework, consider Gin or Echo. If you want co
 - **DoS Protection**: Built-in limits for `MaxPathLength` (4096) and `MaxDepth` (50) to prevent algorithmic complexity attacks.
 - **Frozen Mode**: Innovative `FrozenRouter` flattens static path segments for extreme read-heavy performance.
 - **Lock-Free Logger**: Specific high-throughput `RingBuffer` logger implementation.
-- **Minimalist Middleware**: Includes essential middlewares (Recovery, RequestID, AccessLog, Timeout, BodySizeLimit).
+- **Minimalist Middleware**: Includes essential middlewares (Logger, Recovery, RequestID, AccessLog, Timeout, BodySizeLimit, CORS, Static).
 - **Pre-composed Middleware**: `Router.Use` and `Group` build middleware chains at registration time (no per-request wrapping).
 - **Custom 404/405**: Optional `NotFound` and `MethodNotAllowed` handlers.
+- **Strict Slash (Default: on)**: Redirects `/path` <-> `/path/` to the registered canonical path.
+- **UseRawPath (Optional)**: Match on encoded paths and return encoded params. When `RawPath` is valid, matching skips decoded-path cleaning/redirects; invalid `RawPath` falls back to `Path` (see **Path Semantics & Security**).
 
 ## Installation
 
@@ -104,6 +108,18 @@ func main() {
 }
 ```
 
+### Logger (Text / JSON)
+
+```go
+// Text (default)
+_ = r.Use(middleware.Logger)
+
+// JSON
+_ = r.Use(middleware.LoggerWith(middleware.LoggerOptions{
+	JSON: true,
+}))
+```
+
 ### Third-Party Middleware
 
 Wand uses standard `http.Handler` middleware signatures, so you can plug in any
@@ -121,6 +137,37 @@ third-party middleware (JWT, OTEL, Prometheus, etc.) directly:
 - `middleware`: Essential HTTP middlewares.
 - `logger`: Lock-free ring buffer logger for high-throughput scenarios.
 - `server`: Helpers for graceful server shutdown.
+- `auth`: Minimal identity/authenticator interfaces.
+
+## Guides
+
+- `docs/server.md` — production/development server templates.
+- `docs/security.md` — deployment hardening and safety notes.
+- `docs/production_checklist.md` — production security checklist.
+- `docs/integrations.md` — compression, rate limiting, trusted proxy parsing.
+- `docs/observability.md` — Prometheus/OTel/pprof integration.
+- `docs/auth.md` — auth interfaces with JWT/session examples.
+
+## Server Best Practices
+
+See `docs/server.md` for production/development `http.Server` templates and timeout guidance.
+
+## Path Semantics & Security
+
+- **Default behavior**: routing matches against `URL.Path` (decoded). Non-canonical paths are normalized with `cleanPath` and redirected to the canonical path.
+- **UseRawPath**: when enabled and `URL.RawPath` is **valid** (`RawPath == EscapedPath()`), routing matches the **encoded** path and returns **encoded** params. In this mode, decoded-path cleaning/redirects are skipped.
+- **Fallback**: if `RawPath` is invalid or inconsistent, routing falls back to `URL.Path` (decoded) and canonicalization/redirects apply.
+- **StrictSlash + RawPath**: when `UseRawPath` is active, trailing-slash redirects preserve the encoded form to avoid changing path semantics.
+- **Security note**: ensure your reverse proxy and app **agree on a single normalization layer**. If an upstream proxy decodes `%2F` to `/` while the router matches encoded paths, you can get route bypass or mismatch. Avoid double decoding and document the chosen layer for your deployment.
+- **pprof note**: debug endpoints require an explicit allow policy; see `docs/observability.md` for the safe pattern.
+
+## CORS Notes
+
+- `AllowedOrigins: ["*"]` with `AllowCredentials: true` is **rejected** for safety. Use an explicit allowlist or `AllowOriginFunc`.
+
+## Logger Notes
+
+- `RingBuffer.Consume` will **re-panic** if the consumer handler panics, unless `PanicHandler` is set. Set `PanicHandler` to record/alert on failures, but avoid silently dropping log batches.
 
 ## Non-Goals
 
@@ -151,6 +198,20 @@ Run on Apple M4 Pro (Go 1.23).
 > **(2)**: Latency (ns/op) (lower is better)
 > **(3)**: Heap Memory (B/op) (lower is better)
 > **(4)**: Allocations (allocs/op) (lower is better)
+
+## Quality Gates
+
+- CI: build, `go vet`, tests, and race (`.github/workflows/ci.yml`).
+- Lint: `golangci-lint` (`.github/workflows/linter.yml`).
+- Security: `govulncheck` (`.github/workflows/vuln.yml`).
+- Static analysis: `gosec` (`.github/workflows/security.yml`).
+- Supply chain: SBOM (`.github/workflows/sbom.yml`) + Dependabot (`.github/dependabot.yml`).
+- Scheduled fuzz/bench: `.github/workflows/fuzz.yml`, `.github/workflows/bench.yml`.
+- Benchmark regression gate: `benchmarks/baseline.txt` + `BENCH_MAX_REGRESSION_PCT` (see `benchmarks/README.md`).
+
+## Security Guide
+
+See `docs/security.md` for deployment hardening, proxy alignment, and CORS/logging safety notes.
 
 
 ## License

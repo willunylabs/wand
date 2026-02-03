@@ -1,6 +1,8 @@
 package middleware
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"strconv"
 	"sync/atomic"
@@ -15,6 +17,12 @@ var requestIDCounter uint64
 var RequestIDGenerator = defaultRequestIDGenerator
 
 func defaultRequestIDGenerator() string {
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		var dst [32]byte
+		hex.Encode(dst[:], b[:])
+		return string(dst[:])
+	}
 	id := atomic.AddUint64(&requestIDCounter, 1)
 	return strconv.FormatUint(id, 16)
 }

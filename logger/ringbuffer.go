@@ -32,8 +32,6 @@ const (
 type RingBuffer struct {
 	// Producer Index (Atomic)
 	// Producers contend on this index to reserve slots.
-	// Producer Index (Atomic)
-	// Producers contend on this index to reserve slots.
 	head uint64
 	_    [56]byte // [Padding]: Ensures head is on its own cache line (64 bytes) to prevent "False Sharing".
 	// If head and tail were on the same cache line, a write to 'head' by a producer would invalid
@@ -52,6 +50,10 @@ type RingBuffer struct {
 	state []uint32
 
 	closed uint32
+
+	// PanicHandler is invoked if the consumer handler panics.
+	// If nil, the panic is rethrown to avoid silent data loss.
+	PanicHandler func(any)
 }
 
 // NewRingBuffer creates a ring buffer with the given capacity.
@@ -60,11 +62,12 @@ func NewRingBuffer(capacity uint64) (*RingBuffer, error) {
 	if capacity == 0 || (capacity&(capacity-1)) != 0 {
 		return nil, fmt.Errorf("capacity must be power of 2")
 	}
-	maxInt := int(^uint(0) >> 1)
+	maxInt := ^uint(0) >> 1
 	if capacity > uint64(maxInt) {
 		return nil, fmt.Errorf("capacity too large")
 	}
 
+	// #nosec G115 -- bounds checked above
 	capInt := int(capacity)
 	return &RingBuffer{
 		mask:  capacity - 1,
@@ -84,9 +87,6 @@ func (rb *RingBuffer) Close() {
 	atomic.StoreUint32(&rb.closed, 1)
 }
 
-// TryWrite attempts to write a log event into the buffer.
-// Returns false if the buffer is full (strategy: drop).
-// This is lock-free and thread-safe for multiple producers.
 // TryWrite attempts to write a log event into the buffer.
 // Returns false if the buffer is full (strategy: drop).
 // This is lock-free and thread-safe for multiple producers.
@@ -169,17 +169,26 @@ func (rb *RingBuffer) Consume(handler func([]LogEvent)) {
 			}
 
 			if available > 0 {
-				// Case A: No wrap-around in batch
+				// Batch consumption with proper wrap-around handling
 				nextSlot := slotIdx
 				endSlot := (curr + available) & rb.mask
 
 				if endSlot > nextSlot {
-					// Contiguous
-					consumeBatch(handler, rb.data[nextSlot:endSlot])
+					// Contiguous: no wrap-around
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:endSlot])
+				} else if endSlot < nextSlot {
+					// Wrap-around: spans end of buffer and beginning
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:])
+					if endSlot > 0 {
+						consumeBatch(handler, rb.PanicHandler, rb.data[:endSlot])
+					}
 				} else {
-					// Wraps around
-					consumeBatch(handler, rb.data[nextSlot:rb.Cap()])
-					consumeBatch(handler, rb.data[0:endSlot])
+					// endSlot == nextSlot: full buffer wrap (available == capacity)
+					// This means we need to consume from nextSlot to end, then 0 to nextSlot
+					consumeBatch(handler, rb.PanicHandler, rb.data[nextSlot:])
+					if nextSlot > 0 {
+						consumeBatch(handler, rb.PanicHandler, rb.data[:nextSlot])
+					}
 				}
 
 				// Commit consumption
@@ -210,9 +219,15 @@ func (rb *RingBuffer) Consume(handler func([]LogEvent)) {
 	}
 }
 
-func consumeBatch(handler func([]LogEvent), batch []LogEvent) {
+func consumeBatch(handler func([]LogEvent), panicHandler func(any), batch []LogEvent) {
 	defer func() {
-		_ = recover()
+		if rec := recover(); rec != nil {
+			if panicHandler != nil {
+				panicHandler(rec)
+				return
+			}
+			panic(rec)
+		}
 	}()
 	handler(batch)
 }

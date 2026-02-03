@@ -26,6 +26,11 @@ Wand is a **router**, not a framework. We believe:
 - [x] **Case-Insensitive Matching**:
     - Distinct opt-in setting (`Router.IgnoreCase`).
     - Define behavior for path cleaning and redirects.
+- [x] **Strict Slash Normalization**:
+    - Redirects `/path` <-> `/path/` to the canonical path (default on).
+- [x] **Encoded Path Matching (Optional)**:
+    - `UseRawPath` for matching encoded paths and returning encoded params.
+    - Falls back to decoded `Path` when `RawPath` is invalid.
 - [x] **Router-level Panic Handler**:
     - A lightweight simple fallback for unhandled panics (distinct from middleware.Recovery).
 
@@ -35,19 +40,19 @@ Wand is a **router**, not a framework. We believe:
 *Focus: Reusable components in the `middleware/` package. Keep it small and composable.*
 
 ### Essential Middlewares (official implementations)
-- [ ] `Logger`: Request logging with customizable format (baseline exists, to be refined).
-- [ ] `Recovery`: Panic recovery with stack trace (baseline exists, to be refined).
-- [ ] `CORS`: Standard implementation.
-- [ ] `Static`: Efficient file serving.
+- [x] `Logger`: Request logging with customizable format (baseline exists, to be refined).
+- [x] `Recovery`: Panic recovery with stack trace (baseline exists, to be refined).
+- [x] `CORS`: Standard implementation.
+- [x] `Static`: Efficient file serving.
 
 ### Third-Party Integration Guides (examples only, not official packages)
-- [ ] **Compression**: How to wrap `nytimes/gziphandler`.
-- [ ] **Rate Limiting**: How to integrate `golang.org/x/time/rate`.
-- [ ] **Trusted Proxy**: Helper functions for `X-Forwarded-*` parsing (no security policy).
+- [x] **Compression**: How to wrap `nytimes/gziphandler`.
+- [x] **Rate Limiting**: How to integrate `golang.org/x/time/rate`.
+- [x] **Trusted Proxy**: Helper functions for `X-Forwarded-*` parsing (no security policy).
 
 ### Auth Interfaces (interfaces only)
-- [ ] Define `Identity` and `Authenticator` interfaces.
-- [ ] Provide JWT/Session examples (outside core repo).
+- [x] Define `Identity` and `Authenticator` interfaces.
+- [x] Provide JWT/Session examples (outside core repo).
 
 ---
 
@@ -55,14 +60,14 @@ Wand is a **router**, not a framework. We believe:
 *Focus: Thin adapters to make ecosystem integrations easy. No framework bloat.*
 
 ### Server Helpers (docs + snippets, not a new package)
-- [ ] Best-practice docs for `http.Server` timeouts (`ReadHeader`, `Idle`).
-- [ ] Example Production/Development templates.
-- [ ] **No wrapper** around `ListenAndServe`.
+- [x] Best-practice docs for `http.Server` timeouts (`ReadHeader`, `Idle`).
+- [x] Example Production/Development templates.
+- [x] **No wrapper** around `ListenAndServe`.
 
 ### Observability Adapters (thin helpers)
-- [ ] **Prometheus**: `PrometheusMiddleware(registry)` for count, duration, size (minimal API).
-- [ ] **OpenTelemetry**: `OTELMiddleware(tracer)` for span creation + context propagation (minimal API).
-- [ ] **Pprof**: `RegisterPprof(router, prefix)` helper.
+- [x] **Prometheus**: Integration guide + minimal snippets (no core dependency).
+- [x] **OpenTelemetry**: Integration guide + minimal snippets (no core dependency).
+- [x] **Pprof**: `RegisterPprofWith(router, opts)` helper with allow policy.
 
 ---
 

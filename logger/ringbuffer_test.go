@@ -113,3 +113,47 @@ func BenchmarkRingBuffer_Throughput(b *testing.B) {
 		}
 	})
 }
+
+func TestRingBuffer_ConsumePanicHandler(t *testing.T) {
+	rb, err := NewRingBuffer(8)
+	if err != nil {
+		t.Fatalf("failed to create: %v", err)
+	}
+
+	panicCh := make(chan any, 1)
+	rb.PanicHandler = func(v any) {
+		select {
+		case panicCh <- v:
+		default:
+		}
+	}
+
+	done := make(chan struct{})
+	go func() {
+		rb.Consume(func(events []LogEvent) {
+			panic("boom")
+		})
+		close(done)
+	}()
+
+	if !rb.TryWrite(LogEvent{Message: "panic"}) {
+		t.Fatal("expected write to succeed")
+	}
+
+	select {
+	case v := <-panicCh:
+		if v == nil {
+			t.Fatal("expected panic value")
+		}
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for panic handler")
+	}
+
+	rb.Close()
+
+	select {
+	case <-done:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("timed out waiting for consumer to finish")
+	}
+}

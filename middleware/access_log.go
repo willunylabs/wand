@@ -22,31 +22,49 @@ func AccessLog(rb *logger.RingBuffer, next http.Handler) http.Handler {
 		sw.ResponseWriter = w
 		sw.status = 0
 		sw.bytes = 0
+		var recovered any
+		defer func() {
+			if rec := recover(); rec != nil {
+				recovered = rec
+			}
+
+			status := sw.status
+			bytes := sw.bytes
+			sw.ResponseWriter = nil
+			sw.status = 0
+			sw.bytes = 0
+			statusWriterPool.Put(sw)
+			if status == 0 {
+				if recovered != nil {
+					status = http.StatusInternalServerError
+				} else {
+					status = http.StatusOK
+				}
+			}
+
+			remote := r.RemoteAddr
+			if host, _, err := net.SplitHostPort(remote); err == nil {
+				remote = host
+			}
+
+				end := time.Now()
+				event := logger.LogEvent{
+					Timestamp:     end.UnixNano(),
+					Method:        r.Method,
+					Path:          r.URL.Path,
+					Status:        statusToUint16(status),
+					Bytes:         bytes,
+					DurationNanos: end.Sub(start).Nanoseconds(),
+					RemoteAddr:    remote,
+				}
+			_ = rb.TryWrite(event)
+
+			if recovered != nil {
+				panic(recovered)
+			}
+		}()
+
 		next.ServeHTTP(sw, r)
-
-		status := sw.status
-		bytes := sw.bytes
-		statusWriterPool.Put(sw)
-		if status == 0 {
-			status = http.StatusOK
-		}
-
-		remote := r.RemoteAddr
-		if host, _, err := net.SplitHostPort(remote); err == nil {
-			remote = host
-		}
-
-		end := time.Now()
-		event := logger.LogEvent{
-			Timestamp:     end.UnixNano(),
-			Method:        r.Method,
-			Path:          r.URL.Path,
-			Status:        uint16(status),
-			Bytes:         bytes,
-			DurationNanos: end.Sub(start).Nanoseconds(),
-			RemoteAddr:    remote,
-		}
-		_ = rb.TryWrite(event)
 	})
 }
 
@@ -111,5 +129,20 @@ func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
 		w.bytes += n
 		return n, err
 	}
-	return io.Copy(w.ResponseWriter, r)
+	if w.status == 0 {
+		w.status = http.StatusOK
+	}
+	n, err := io.Copy(w.ResponseWriter, r)
+	w.bytes += n
+	return n, err
+}
+
+func statusToUint16(status int) uint16 {
+	if status <= 0 {
+		return 0
+	}
+	if status > 0xffff {
+		return 0xffff
+	}
+	return uint16(status) // #nosec G115 -- bounds checked above
 }

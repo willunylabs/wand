@@ -3,7 +3,10 @@ package server
 import (
 	"context"
 	"errors"
+	"net"
 	"net/http"
+	"strings"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -36,6 +39,15 @@ func TestRun_ListenError(t *testing.T) {
 }
 
 func TestRun_GracefulShutdown(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		if errors.Is(err, syscall.EPERM) || errors.Is(err, syscall.EACCES) || strings.Contains(err.Error(), "operation not permitted") {
+			t.Skipf("network listen not permitted: %v", err)
+		}
+		t.Fatalf("listen failed: %v", err)
+	}
+	_ = ln.Close()
+
 	ctx, cancel := context.WithCancel(context.Background())
 	srv := &http.Server{
 		Addr: "127.0.0.1:0",
@@ -52,8 +64,8 @@ func TestRun_GracefulShutdown(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	cancel()
 
-	err := <-done
-	if err != nil && !errors.Is(err, http.ErrServerClosed) {
-		t.Fatalf("unexpected error: %v", err)
+	runErr := <-done
+	if runErr != nil && !errors.Is(runErr, http.ErrServerClosed) {
+		t.Fatalf("unexpected error: %v", runErr)
 	}
 }

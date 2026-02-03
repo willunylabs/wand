@@ -1,0 +1,4 @@
+# Security audit outputs (local-only)
+docs/ownership-map-out/
+docs/security_best_practices_report.md
+docs/wand-threat-model.md

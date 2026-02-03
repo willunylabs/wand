@@ -11,7 +11,6 @@ import (
 )
 
 // SignalContext returns a context cancelled on SIGINT or SIGTERM.
-// SignalContext returns a context cancelled on SIGINT or SIGTERM.
 // [Lifecycle]:
 // This is the standard way to hook OS signals into the Go context tree.
 // Passing this context to server.Run allows the server to stop accepting new connections
@@ -20,7 +19,6 @@ func SignalContext(parent context.Context) (context.Context, context.CancelFunc)
 	return signal.NotifyContext(parent, os.Interrupt, syscall.SIGTERM)
 }
 
-// Run starts the server and performs a graceful shutdown on ctx.Done().
 // Run starts the server and performs a graceful shutdown on ctx.Done().
 // [Pattern: Graceful Shutdown]
 //  1. Start server in a goroutine suitable for blocked ListenAndServe().

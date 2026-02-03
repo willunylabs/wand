@@ -17,6 +17,8 @@ type FrozenRouter struct {
 	MethodNotAllowed HandleFunc
 	PanicHandler     func(http.ResponseWriter, *http.Request, any)
 	IgnoreCase       bool
+	StrictSlash      bool
+	UseRawPath       bool
 }
 
 type frozenTable struct {
@@ -92,6 +94,8 @@ func NewFrozenRouter() *FrozenRouter {
 	fr := &FrozenRouter{
 		table: newFrozenTable(),
 		hosts: make(map[string]*frozenTable),
+		// Best-practice default: normalize trailing slashes with redirects.
+		StrictSlash: true,
 	}
 	fr.paramPool = sync.Pool{
 		New: func() interface{} {
@@ -133,6 +137,8 @@ func (r *Router) Freeze() (*FrozenRouter, error) {
 	} else {
 		fr.IgnoreCase = r.IgnoreCase
 	}
+	fr.StrictSlash = r.StrictSlash
+	fr.UseRawPath = r.UseRawPath
 	fr.NotFound = r.NotFound
 	fr.MethodNotAllowed = r.MethodNotAllowed
 	fr.PanicHandler = r.PanicHandler
@@ -297,6 +303,7 @@ func (r *FrozenRouter) getPartsWithRaw(path, raw string) (*pathSegments, bool) {
 	segs := r.partsPool.Get().(*pathSegments)
 
 	segs.path = raw
+	segs.match = path
 	segs.parts = segs.parts[:0]
 	segs.indices = segs.indices[:0]
 
@@ -342,74 +349,37 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		}()
 	}
 
-	if len(req.URL.Path) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
-	}
-	cleaned := cleanPath(req.URL.Path)
-	if len(cleaned) > MaxPathLength {
-		w.WriteHeader(http.StatusRequestURITooLong)
-		return
-	}
-	if cleaned != req.URL.Path {
-		url := *req.URL
-		url.Path = cleaned
-		url.RawPath = ""
-		code := http.StatusMovedPermanently
-		if req.Method != http.MethodGet && req.Method != http.MethodHead {
-			code = http.StatusPermanentRedirect
-		}
-		http.Redirect(w, req, url.String(), code)
-		return
+	ctx, ok := prepareRouteContext(w, req, r.UseRawPath, r.IgnoreCase)
+	if !ok {
+		return // Already responded (redirect or error)
 	}
 
-	matchPath := cleaned
-	if r.IgnoreCase {
-		matchPath = lowerASCII(cleaned)
-	}
-	rawPath := cleaned
 	host := normalizeHost(req.Host)
-
-	method := req.Method
-
 	hostTable := r.tableForHost(host)
 	hasHost := host != "" && hostTable != &r.table
 	defaultTable := &r.table
 
+	// Try host-specific table first
 	if hasHost {
-		if r.serveInTable(w, req, method, matchPath, rawPath, hostTable) {
+		if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, hostTable) {
 			return
 		}
-		if allow, ok := r.allowedMethodsInTable(matchPath, hostTable); ok {
-			w.Header().Set("Allow", allow)
-			if req.Method == http.MethodOptions {
-				w.WriteHeader(http.StatusOK)
-				return
-			}
-			if r.MethodNotAllowed != nil {
-				r.MethodNotAllowed(w, req)
-				return
-			}
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if r.tryAlternateSlashInTable(w, req, ctx, hostTable) {
+			return
+		}
+		if r.handleMethodNotAllowedInTable(w, req, ctx, hostTable) {
 			return
 		}
 	}
 
-	if r.serveInTable(w, req, method, matchPath, rawPath, defaultTable) {
+	// Try default table
+	if r.serveInTable(w, req, ctx.method, ctx.matchPath, ctx.paramPath, defaultTable) {
 		return
 	}
-
-	if allow, ok := r.allowedMethodsInTable(matchPath, defaultTable); ok {
-		w.Header().Set("Allow", allow)
-		if req.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusOK)
-			return
-		}
-		if r.MethodNotAllowed != nil {
-			r.MethodNotAllowed(w, req)
-			return
-		}
-		w.WriteHeader(http.StatusMethodNotAllowed)
+	if r.tryAlternateSlashInTable(w, req, ctx, defaultTable) {
+		return
+	}
+	if r.handleMethodNotAllowedInTable(w, req, ctx, defaultTable) {
 		return
 	}
 
@@ -418,6 +388,39 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		return
 	}
 	http.NotFound(w, req)
+}
+
+func (r *FrozenRouter) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *frozenTable) bool {
+	altMatch, ok := alternatePath(ctx.matchPath)
+	if !ok || altMatch == ctx.matchPath {
+		return false
+	}
+	if r.StrictSlash {
+		if _, ok := r.allowedMethodsInTable(altMatch, table); ok {
+			altRedirect, ok := alternatePath(ctx.paramPath)
+			if ok && altRedirect != "" {
+				ctx.redirectFn(w, req, altRedirect)
+				return true
+			}
+		}
+		return false
+	}
+	altParam, _ := alternatePath(ctx.paramPath)
+	return r.serveInTable(w, req, ctx.method, altMatch, altParam, table)
+}
+
+func (r *FrozenRouter) handleMethodNotAllowedInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *frozenTable) bool {
+	if allow, ok := r.allowedMethodsInTable(ctx.matchPath, table); ok {
+		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+	}
+	if !r.StrictSlash {
+		if altMatch, ok := alternatePath(ctx.matchPath); ok {
+			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
+				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
+			}
+		}
+	}
+	return false
 }
 
 func (r *FrozenRouter) serveInTable(w http.ResponseWriter, req *http.Request, method, matchPath, rawPath string, table *frozenTable) bool {
@@ -559,7 +562,7 @@ func (n *frozenNode) search(segs *pathSegments, height int, params *Params) *fro
 		start := segs.indices[height]
 		last := height + n.spanSegs - 1
 		end := segs.indices[last] + len(parts[last])
-		if segs.path[start:end] != n.staticSpan {
+		if segs.match[start:end] != n.staticSpan {
 			return nil
 		}
 		height += n.spanSegs
