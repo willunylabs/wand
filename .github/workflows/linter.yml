@@ -26,5 +26,5 @@ jobs:
         with:
           # Require: The version of golangci-lint to use.
           # When `install-mode` is `binary` (default) the value can be 'latest', 'v1.x', 'v1.x.y' or '1.x.y'.
-          version: v1.64
+          version: v2
           skip-cache: true
