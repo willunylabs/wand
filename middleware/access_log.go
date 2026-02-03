@@ -47,16 +47,16 @@ func AccessLog(rb *logger.RingBuffer, next http.Handler) http.Handler {
 				remote = host
 			}
 
-			end := time.Now()
-			event := logger.LogEvent{
-				Timestamp:     end.UnixNano(),
-				Method:        r.Method,
-				Path:          r.URL.Path,
-				Status:        uint16(status),
-				Bytes:         bytes,
-				DurationNanos: end.Sub(start).Nanoseconds(),
-				RemoteAddr:    remote,
-			}
+				end := time.Now()
+				event := logger.LogEvent{
+					Timestamp:     end.UnixNano(),
+					Method:        r.Method,
+					Path:          r.URL.Path,
+					Status:        statusToUint16(status),
+					Bytes:         bytes,
+					DurationNanos: end.Sub(start).Nanoseconds(),
+					RemoteAddr:    remote,
+				}
 			_ = rb.TryWrite(event)
 
 			if recovered != nil {
@@ -135,4 +135,14 @@ func (w *statusWriter) ReadFrom(r io.Reader) (int64, error) {
 	n, err := io.Copy(w.ResponseWriter, r)
 	w.bytes += n
 	return n, err
+}
+
+func statusToUint16(status int) uint16 {
+	if status <= 0 {
+		return 0
+	}
+	if status > 0xffff {
+		return 0xffff
+	}
+	return uint16(status) // #nosec G115 -- bounds checked above
 }

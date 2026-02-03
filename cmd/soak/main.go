@@ -1,10 +1,11 @@
 package main
 
 import (
+	"crypto/rand"
+	"encoding/binary"
 	"flag"
 	"fmt"
 	"io"
-	"math/rand"
 	"net/http"
 	"net/http/httptest"
 	"runtime"
@@ -83,7 +84,7 @@ func main() {
 	for i := 0; i < workers; i++ {
 		go func(seed int64) {
 			defer wg.Done()
-			rnd := rand.New(rand.NewSource(seed))
+			rnd := newFastRand(seed)
 			for time.Now().Before(end) {
 				if rateCh != nil {
 					<-rateCh
@@ -102,7 +103,7 @@ func main() {
 					atomic.AddUint64(&errCount, 1)
 				}
 			}
-		}(time.Now().UnixNano() + int64(i))
+		}(int64(randSeed()) + int64(i))
 	}
 
 	wg.Wait()
@@ -112,4 +113,41 @@ func main() {
 	qps := float64(total) / elapsed
 	fmt.Printf("duration=%s concurrency=%d rps_target=%d total=%d ok=%d err=%d qps=%.1f\n",
 		duration.String(), workers, *rps, total, okCount, errCount, qps)
+}
+
+type fastRand struct {
+	state uint64
+}
+
+func newFastRand(seed int64) *fastRand {
+	s := uint64(seed)
+	if s == 0 {
+		s = randSeed()
+	}
+	return &fastRand{state: s}
+}
+
+func (r *fastRand) next() uint64 {
+	// xorshift64
+	x := r.state
+	x ^= x << 13
+	x ^= x >> 7
+	x ^= x << 17
+	r.state = x
+	return x
+}
+
+func (r *fastRand) Intn(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	return int(r.next() % uint64(n)) // #nosec G115 -- bounds checked above
+}
+
+func randSeed() uint64 {
+	var b [8]byte
+	if _, err := rand.Read(b[:]); err == nil {
+		return binary.LittleEndian.Uint64(b[:])
+	}
+	return uint64(time.Now().UnixNano()) // #nosec G115 -- fallback, non-security usage
 }

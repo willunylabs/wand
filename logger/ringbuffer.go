@@ -62,11 +62,12 @@ func NewRingBuffer(capacity uint64) (*RingBuffer, error) {
 	if capacity == 0 || (capacity&(capacity-1)) != 0 {
 		return nil, fmt.Errorf("capacity must be power of 2")
 	}
-	maxInt := int(^uint(0) >> 1)
+	maxInt := ^uint(0) >> 1
 	if capacity > uint64(maxInt) {
 		return nil, fmt.Errorf("capacity too large")
 	}
 
+	// #nosec G115 -- bounds checked above
 	capInt := int(capacity)
 	return &RingBuffer{
 		mask:  capacity - 1,
