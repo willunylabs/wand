@@ -1,0 +1,912 @@
+{
+  "directed": false,
+  "multigraph": false,
+  "graph": {
+    "community_maintainers": [
+      {
+        "id": 1,
+        "size": 13,
+        "maintainers": [
+          {
+            "person_id": "19925934+rickwwh@users.noreply.github.com",
+            "name": "rickwwh",
+            "touches": 68,
+            "touch_share": 1.0,
+            "recency_share": 1.0,
+            "sensitive_share": 0.0,
+            "primary_tz_offset": "+08:00"
+          }
+        ],
+        "bus_factor": 1,
+        "owner_count": 1,
+        "totals": {
+          "touches": 68,
+          "recency_weight": 67.807208,
+          "sensitive_weight": 0
+        }
+      },
+      {
+        "id": 2,
+        "size": 5,
+        "maintainers": [
+          {
+            "person_id": "19925934+rickwwh@users.noreply.github.com",
+            "name": "rickwwh",
+            "touches": 14,
+            "touch_share": 1.0,
+            "recency_share": 1.0,
+            "sensitive_share": 0.0,
+            "primary_tz_offset": "+08:00"
+          }
+        ],
+        "bus_factor": 1,
+        "owner_count": 1,
+        "totals": {
+          "touches": 14,
+          "recency_weight": 13.969651,
+          "sensitive_weight": 0
+        }
+      },
+      {
+        "id": 3,
+        "size": 3,
+        "maintainers": [
+          {
+            "person_id": "19925934+rickwwh@users.noreply.github.com",
+            "name": "rickwwh",
+            "touches": 6,
+            "touch_share": 1.0,
+            "recency_share": 1.0,
+            "sensitive_share": 0.0,
+            "primary_tz_offset": "+08:00"
+          }
+        ],
+        "bus_factor": 1,
+        "owner_count": 1,
+        "totals": {
+          "touches": 6,
+          "recency_weight": 5.99762,
+          "sensitive_weight": 0
+        }
+      }
+    ]
+  },
+  "nodes": [
+    {
+      "community_id": 3,
+      "id": "CHANGELOG.md"
+    },
+    {
+      "community_id": 3,
+      "id": "Makefile"
+    },
+    {
+      "community_id": 1,
+      "id": "README.md"
+    },
+    {
+      "community_id": 1,
+      "id": "ROADMAP.md"
+    },
+    {
+      "community_id": 3,
+      "id": "cmd/soak/main.go"
+    },
+    {
+      "community_id": 1,
+      "id": "middleware/access_log.go"
+    },
+    {
+      "community_id": 1,
+      "id": "router/README.md"
+    },
+    {
+      "community_id": 1,
+      "id": "router/frozen.go"
+    },
+    {
+      "community_id": 1,
+      "id": "router/router.go"
+    },
+    {
+      "community_id": 1,
+      "id": "router/router_test.go"
+    },
+    {
+      "community_id": 2,
+      "id": "logger/ringbuffer.go"
+    },
+    {
+      "community_id": 2,
+      "id": "logger/ringbuffer_test.go"
+    },
+    {
+      "community_id": 1,
+      "id": "middleware/middleware_test.go"
+    },
+    {
+      "community_id": 2,
+      "id": "middleware/recovery.go"
+    },
+    {
+      "community_id": 2,
+      "id": "router/router_fuzz_test.go"
+    },
+    {
+      "community_id": 1,
+      "id": "server/graceful_test.go"
+    },
+    {
+      "community_id": 2,
+      "id": "server/graceful.go"
+    },
+    {
+      "community_id": 1,
+      "id": "middleware/request_id.go"
+    },
+    {
+      "community_id": 1,
+      "id": "router/group.go"
+    },
+    {
+      "community_id": 1,
+      "id": "router/trie.go"
+    },
+    {
+      "community_id": 1,
+      "id": ".golangci.yml"
+    }
+  ],
+  "edges": [
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "Makefile"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "README.md"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "ROADMAP.md"
+    },
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "cmd/soak/main.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "middleware/access_log.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "CHANGELOG.md",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "Makefile",
+      "target": "README.md"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "Makefile",
+      "target": "ROADMAP.md"
+    },
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "Makefile",
+      "target": "cmd/soak/main.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "Makefile",
+      "target": "middleware/access_log.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "Makefile",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "Makefile",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "Makefile",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "Makefile",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "README.md",
+      "target": "ROADMAP.md"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "cmd/soak/main.go"
+    },
+    {
+      "weight": 0.3,
+      "count": 3,
+      "source": "README.md",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.666667,
+      "count": 6,
+      "source": "README.md",
+      "target": "middleware/access_log.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "README.md",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "README.md",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.666667,
+      "count": 6,
+      "source": "README.md",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.777778,
+      "count": 7,
+      "source": "README.md",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.6,
+      "count": 6,
+      "source": "README.md",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "README.md",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "README.md",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.222222,
+      "count": 2,
+      "source": "README.md",
+      "target": "server/graceful.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "README.md",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "ROADMAP.md",
+      "target": "cmd/soak/main.go"
+    },
+    {
+      "weight": 0.222222,
+      "count": 2,
+      "source": "ROADMAP.md",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.625,
+      "count": 5,
+      "source": "ROADMAP.md",
+      "target": "middleware/access_log.go"
+    },
+    {
+      "weight": 0.666667,
+      "count": 4,
+      "source": "ROADMAP.md",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.714286,
+      "count": 5,
+      "source": "ROADMAP.md",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.625,
+      "count": 5,
+      "source": "ROADMAP.md",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "ROADMAP.md",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.555556,
+      "count": 5,
+      "source": "ROADMAP.md",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "ROADMAP.md",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.666667,
+      "count": 4,
+      "source": "ROADMAP.md",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.428571,
+      "count": 3,
+      "source": "ROADMAP.md",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "cmd/soak/main.go",
+      "target": "middleware/access_log.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "cmd/soak/main.go",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "cmd/soak/main.go",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "cmd/soak/main.go",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "cmd/soak/main.go",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 3,
+      "source": "middleware/access_log.go",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.571429,
+      "count": 4,
+      "source": "middleware/access_log.go",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.857143,
+      "count": 6,
+      "source": "middleware/access_log.go",
+      "target": "router/README.md"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "middleware/access_log.go",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.666667,
+      "count": 6,
+      "source": "middleware/access_log.go",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.875,
+      "count": 7,
+      "source": "middleware/access_log.go",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.375,
+      "count": 3,
+      "source": "middleware/access_log.go",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.375,
+      "count": 3,
+      "source": "middleware/access_log.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "middleware/access_log.go",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.222222,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.666667,
+      "count": 4,
+      "source": "router/README.md",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.857143,
+      "count": 6,
+      "source": "router/README.md",
+      "target": "router/frozen.go"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "router/README.md",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.75,
+      "count": 6,
+      "source": "router/README.md",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.428571,
+      "count": 3,
+      "source": "router/README.md",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.428571,
+      "count": 3,
+      "source": "router/README.md",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "router/README.md",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.2,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.571429,
+      "count": 4,
+      "source": "router/frozen.go",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.875,
+      "count": 7,
+      "source": "router/frozen.go",
+      "target": "router/router.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.875,
+      "count": 7,
+      "source": "router/frozen.go",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.375,
+      "count": 3,
+      "source": "router/frozen.go",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.375,
+      "count": 3,
+      "source": "router/frozen.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "router/frozen.go",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.3,
+      "count": 3,
+      "source": "router/router.go",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "router/router.go",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.777778,
+      "count": 7,
+      "source": "router/router.go",
+      "target": "router/router_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "router/router.go",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "router/router.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.222222,
+      "count": 2,
+      "source": "router/router.go",
+      "target": "server/graceful.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router.go",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.3,
+      "count": 3,
+      "source": "router/router_test.go",
+      "target": "logger/ringbuffer.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 4,
+      "source": "router/router_test.go",
+      "target": "middleware/middleware_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": "middleware/request_id.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 3,
+      "source": "router/router_test.go",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 3,
+      "source": "router/router_test.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.25,
+      "count": 2,
+      "source": "router/router_test.go",
+      "target": ".golangci.yml"
+    },
+    {
+      "weight": 0.4,
+      "count": 2,
+      "source": "logger/ringbuffer.go",
+      "target": "logger/ringbuffer_test.go"
+    },
+    {
+      "weight": 0.4,
+      "count": 2,
+      "source": "logger/ringbuffer.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 0.4,
+      "count": 2,
+      "source": "logger/ringbuffer.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.6,
+      "count": 3,
+      "source": "logger/ringbuffer.go",
+      "target": "server/graceful.go"
+    },
+    {
+      "weight": 0.285714,
+      "count": 2,
+      "source": "logger/ringbuffer.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "logger/ringbuffer_test.go",
+      "target": "middleware/recovery.go"
+    },
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "logger/ringbuffer_test.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.5,
+      "count": 2,
+      "source": "middleware/middleware_test.go",
+      "target": "server/graceful_test.go"
+    },
+    {
+      "weight": 0.6,
+      "count": 3,
+      "source": "middleware/middleware_test.go",
+      "target": "router/group.go"
+    },
+    {
+      "weight": 0.333333,
+      "count": 2,
+      "source": "middleware/middleware_test.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 1.0,
+      "count": 2,
+      "source": "middleware/recovery.go",
+      "target": "router/router_fuzz_test.go"
+    },
+    {
+      "weight": 0.4,
+      "count": 2,
+      "source": "server/graceful.go",
+      "target": "router/trie.go"
+    },
+    {
+      "weight": 0.6,
+      "count": 3,
+      "source": "router/group.go",
+      "target": "router/trie.go"
+    }
+  ]
+}

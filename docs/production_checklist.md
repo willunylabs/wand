@@ -3,6 +3,7 @@
 Use this checklist before deploying Wand-based services.
 
 ## Server Defaults
+- Use Go 1.24.12+ (patched standard library).
 - Set `ReadHeaderTimeout`, `ReadTimeout`, `WriteTimeout`, `IdleTimeout`.
 - Set `MaxHeaderBytes` to cap header memory usage.
 - Enforce request body limits at the proxy or with middleware.

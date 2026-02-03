@@ -7,6 +7,8 @@
 
 **High-Performance, Zero-Allocation HTTP Router for Go**
 
+**Go version**: 1.24.12+ (patched standard library).
+
 `wand` is a minimalist, infrastructure-grade HTTP router and toolkit designed for services where latency and memory efficiency are critical. It features a lock-free design, zero-allocation routing paths, and effective DoS protection.
 
 > **Wand** /wɒnd/ - A symbol of magic and control. Elegantly directing traffic with precision and speed.

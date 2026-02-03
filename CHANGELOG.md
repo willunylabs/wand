@@ -3,6 +3,11 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
+### Breaking
+- Require Go 1.24.12+ (security-patched standard library).
+
+### Changed
+- CI now targets Go 1.24.x only.
 
 ## [1.0.0] - 2026-02-03
 ### Breaking
