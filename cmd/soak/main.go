@@ -82,7 +82,7 @@ func main() {
 
 	wg.Add(workers)
 	for i := 0; i < workers; i++ {
-		go func(seed int64) {
+		go func(seed uint64) {
 			defer wg.Done()
 			rnd := newFastRand(seed)
 			for time.Now().Before(end) {
@@ -103,7 +103,7 @@ func main() {
 					atomic.AddUint64(&errCount, 1)
 				}
 			}
-		}(int64(randSeed()) + int64(i))
+		}(randSeed() ^ (uint64(i) + 1))
 	}
 
 	wg.Wait()
@@ -119,12 +119,11 @@ type fastRand struct {
 	state uint64
 }
 
-func newFastRand(seed int64) *fastRand {
-	s := uint64(seed)
-	if s == 0 {
-		s = randSeed()
+func newFastRand(seed uint64) *fastRand {
+	if seed == 0 {
+		seed = randSeed()
 	}
-	return &fastRand{state: s}
+	return &fastRand{state: seed}
 }
 
 func (r *fastRand) next() uint64 {
