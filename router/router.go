@@ -842,11 +842,6 @@ func buildAllowHeader(bits uint8, custom []string) string {
 	return b.String()
 }
 
-func isStandardMethod(method string) bool {
-	_, ok := standardMethodBits[method]
-	return ok
-}
-
 func isValidMethod(method string) bool {
 	if method == "" {
 		return false

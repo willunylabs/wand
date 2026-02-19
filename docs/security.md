@@ -20,7 +20,7 @@ srv := &http.Server{
 
 ## 2. Go Toolchain
 
-- Use **Go 1.24.12+** (patched standard library).
+- Use **Go 1.24.13+** (patched standard library).
 - Keep Go patch versions up to date to receive security fixes.
 
 ## 3. Reverse Proxy Alignment

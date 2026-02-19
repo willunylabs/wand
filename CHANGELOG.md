@@ -10,8 +10,8 @@ All notable changes to this project will be documented in this file.
 - Migration guide from Gin/Echo (`docs/migration_gin_echo.md`).
 
 ### Changed
-- Go toolchain is now pinned with `toolchain go1.24.12` in `go.mod`.
-- CI/workflows now use fixed Go patch version `1.24.12`.
+- Go toolchain is now pinned with `toolchain go1.24.13` in `go.mod`.
+- CI/workflows now use fixed Go patch version `1.24.13`.
 - `gosec` and `govulncheck` installs are pinned to fixed versions in workflows.
 - `allowedMethodsInTable` now uses a standard-method bitset plus custom-method slice instead of per-request map aggregation.
 - `RingBuffer.TryWrite` now uses bounded spin + exponential backoff under contention.
@@ -19,7 +19,7 @@ All notable changes to this project will be documented in this file.
 
 ## [1.0.0] - 2026-02-03
 ### Breaking
-- Require Go 1.24.12+ (security-patched standard library).
+- Require Go 1.24.13+ (security-patched standard library).
 - `RegisterPprof` now requires an explicit allow policy via `RegisterPprofWith` (returns error otherwise).
 
 ### Added

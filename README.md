@@ -7,7 +7,7 @@
 
 **High-Performance, Zero-Allocation HTTP Router for Go**
 
-**Go version**: 1.24.12+ (patched standard library).
+**Go version**: 1.24.13+ (patched standard library).
 
 `wand` is a minimalist, infrastructure-grade HTTP router and toolkit designed for services where latency and memory efficiency are critical. It features a lock-free design, zero-allocation routing paths, and effective DoS protection.
 
@@ -183,7 +183,7 @@ Wand will **not** include:
 
 ### Router Microbench (2026-02-15)
 
-Run on Apple M4 Pro with Go 1.24.12:
+Run on Apple M4 Pro with Go 1.24.13:
 
 | Benchmark | ns/op | B/op | allocs/op |
 | :--- | ---: | ---: | ---: |
