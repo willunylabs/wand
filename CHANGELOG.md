@@ -14,7 +14,9 @@ All notable changes to this project will be documented in this file.
 - CI/workflows now use fixed Go patch version `1.24.13`.
 - `gosec` and `govulncheck` installs are pinned to fixed versions in workflows.
 - `allowedMethodsInTable` now uses a standard-method bitset plus custom-method slice instead of per-request map aggregation.
+- `allowedMethodsInTable` now has a static-route fast path cache, reducing `405/OPTIONS` overhead and allocations.
 - `RingBuffer.TryWrite` now uses bounded spin + exponential backoff under contention.
+- Benchmark comparison no longer depends on runtime `benchstat` installation; regression checks now run via a deterministic local parser script.
 - Bench baseline refreshed and benchmark docs updated.
 
 ## [1.0.0] - 2026-02-03

@@ -22,9 +22,11 @@ type FrozenRouter struct {
 }
 
 type frozenTable struct {
-	roots     map[string]*frozenNode
-	static    map[string]map[string]HandleFunc
-	hasParams map[string]bool
+	roots       map[string]*frozenNode
+	static      map[string]map[string]HandleFunc
+	staticAllow map[string]string
+	hasParams   map[string]bool
+	anyParams   bool
 }
 
 type frozenNode struct {
@@ -115,9 +117,10 @@ func NewFrozenRouter() *FrozenRouter {
 
 func newFrozenTable() frozenTable {
 	return frozenTable{
-		roots:     make(map[string]*frozenNode),
-		static:    make(map[string]map[string]HandleFunc),
-		hasParams: make(map[string]bool),
+		roots:       make(map[string]*frozenNode),
+		static:      make(map[string]map[string]HandleFunc),
+		staticAllow: make(map[string]string),
+		hasParams:   make(map[string]bool),
 	}
 }
 
@@ -152,7 +155,9 @@ func freezeTable(src *routeTable) *frozenTable {
 	}
 	ft := newFrozenTable()
 	ft.static = cloneStatic(src.static)
+	ft.staticAllow = cloneStaticAllow(src.staticAllow)
 	ft.hasParams = cloneHasParams(src.hasParams)
+	ft.anyParams = src.anyParams
 	for method, root := range src.roots {
 		ft.roots[method] = freezeRoot(root)
 	}
@@ -182,6 +187,17 @@ func cloneHasParams(src map[string]bool) map[string]bool {
 		return nil
 	}
 	dst := make(map[string]bool, len(src))
+	for k, v := range src {
+		dst[k] = v
+	}
+	return dst
+}
+
+func cloneStaticAllow(src map[string]string) map[string]string {
+	if src == nil {
+		return nil
+	}
+	dst := make(map[string]string, len(src))
 	for k, v := range src {
 		dst[k] = v
 	}
@@ -495,6 +511,13 @@ func (r *FrozenRouter) serveMethodInTable(w http.ResponseWriter, req *http.Reque
 }
 
 func (r *FrozenRouter) allowedMethodsInTable(matchPath string, table *frozenTable) (string, bool) {
+	if !table.anyParams {
+		if allow, ok := table.staticAllow[matchPath]; ok {
+			return allow, true
+		}
+		return "", false
+	}
+
 	var bits uint8
 	var custom []string
 

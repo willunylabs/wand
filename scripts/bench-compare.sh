@@ -21,28 +21,73 @@ if [ -n "${baseline_goos}" ] && [ -n "${baseline_goarch}" ] && [ -n "${latest_go
   fi
 fi
 
-if ! command -v benchstat >/dev/null 2>&1; then
-  GOBIN="$(go env GOPATH)/bin"
-  export PATH="$GOBIN:$PATH"
-  go install golang.org/x/perf/cmd/benchstat@latest
-fi
-
 THRESHOLD="${BENCH_MAX_REGRESSION_PCT:-5}"
-OUT="$(benchstat "$BASELINE" "$LATEST")"
-echo "$OUT"
-echo "$OUT" > benchmarks/compare.txt
+awk -v thr="$THRESHOLD" '
+  function normalize(name) {
+    sub(/-[0-9]+$/, "", name)
+    return name
+  }
 
-echo "$OUT" | awk -v thr="$THRESHOLD" '
-  /^Benchmark/ {
-    if (match($0, /([+-][0-9.]+)%/, m)) {
-      if (m[1] ~ /^\+/) {
-        val = substr(m[1], 2) + 0
-        if (val > thr) {
-          printf("regression > %s%%: %s\n", thr, $0) > "/dev/stderr"
-          fail = 1
-        }
+  function pct(base, latest) {
+    if (base == 0) {
+      if (latest == 0) {
+        return 0
       }
+      return 1000
+    }
+    return ((latest - base) / base) * 100
+  }
+
+  FNR == NR {
+    if ($1 ~ /^Benchmark/) {
+      name = normalize($1)
+      base_ns[name] = $3 + 0
+      base_b[name] = $5 + 0
+      base_alloc[name] = $7 + 0
+    }
+    next
+  }
+
+  {
+    if ($1 ~ /^Benchmark/) {
+      name = normalize($1)
+      latest_ns[name] = $3 + 0
+      latest_b[name] = $5 + 0
+      latest_alloc[name] = $7 + 0
     }
   }
-  END { exit fail }
-'
+
+  END {
+    printf("benchmark regression threshold: %s%%\n", thr)
+    for (name in latest_ns) {
+      if (!(name in base_ns)) {
+        printf("new benchmark (no baseline): %s\n", name)
+        continue
+      }
+
+      ns_pct = pct(base_ns[name], latest_ns[name])
+      b_pct = pct(base_b[name], latest_b[name])
+      alloc_pct = pct(base_alloc[name], latest_alloc[name])
+
+      printf("%s ns/op: %.2f -> %.2f (%+.2f%%), B/op: %.2f -> %.2f (%+.2f%%), allocs/op: %.2f -> %.2f (%+.2f%%)\n",
+             name,
+             base_ns[name], latest_ns[name], ns_pct,
+             base_b[name], latest_b[name], b_pct,
+             base_alloc[name], latest_alloc[name], alloc_pct)
+
+      if (ns_pct > thr || b_pct > thr || alloc_pct > thr) {
+        printf("regression > %s%%: %s\n", thr, name) > "/dev/stderr"
+        fail = 1
+      }
+    }
+
+    for (name in base_ns) {
+      if (!(name in latest_ns)) {
+        printf("missing benchmark in latest: %s\n", name) > "/dev/stderr"
+        fail = 1
+      }
+    }
+
+    exit fail
+  }
+' "$BASELINE" "$LATEST" | tee benchmarks/compare.txt

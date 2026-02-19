@@ -56,9 +56,11 @@ func Param(w http.ResponseWriter, key string) (string, bool) {
 }
 
 type routeTable struct {
-	roots     map[string]*node
-	static    map[string]map[string]HandleFunc
-	hasParams map[string]bool
+	roots       map[string]*node
+	static      map[string]map[string]HandleFunc
+	staticAllow map[string]string
+	hasParams   map[string]bool
+	anyParams   bool
 }
 
 // Router holds the routing tree.
@@ -148,9 +150,10 @@ func (w paramRW) ReadFrom(r io.Reader) (int64, error) {
 func NewRouter() *Router {
 	return &Router{
 		table: routeTable{
-			roots:     make(map[string]*node),
-			static:    make(map[string]map[string]HandleFunc),
-			hasParams: make(map[string]bool),
+			roots:       make(map[string]*node),
+			static:      make(map[string]map[string]HandleFunc),
+			staticAllow: make(map[string]string),
+			hasParams:   make(map[string]bool),
 		},
 		hosts: make(map[string]*routeTable),
 		// Best-practice default: normalize trailing slashes with redirects.
@@ -299,9 +302,10 @@ func normalizeHost(host string) string {
 
 func newRouteTable() *routeTable {
 	return &routeTable{
-		roots:     make(map[string]*node),
-		static:    make(map[string]map[string]HandleFunc),
-		hasParams: make(map[string]bool),
+		roots:       make(map[string]*node),
+		static:      make(map[string]map[string]HandleFunc),
+		staticAllow: make(map[string]string),
+		hasParams:   make(map[string]bool),
 	}
 }
 
@@ -452,6 +456,7 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 		r.routesCount++
 		if hasParams {
 			table.hasParams[method] = true
+			table.anyParams = true
 		} else {
 			m := table.static[method]
 			if m == nil {
@@ -459,6 +464,9 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 				table.static[method] = m
 			}
 			m[matchPattern] = handler
+			if allow, ok := buildStaticAllowHeader(table.static, matchPattern); ok {
+				table.staticAllow[matchPattern] = allow
+			}
 		}
 	}
 	r.mu.Unlock()
@@ -703,6 +711,15 @@ func (r *Router) serveMethodInTable(w http.ResponseWriter, req *http.Request, me
 
 func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (string, bool) {
 	r.mu.RLock()
+	if !table.anyParams {
+		if allow, ok := table.staticAllow[matchPath]; ok {
+			r.mu.RUnlock()
+			return allow, true
+		}
+		r.mu.RUnlock()
+		return "", false
+	}
+
 	var bits uint8
 	var custom []string
 	for method, m := range table.static {
@@ -800,6 +817,27 @@ func addAllowedMethod(method string, bits uint8, custom []string) (uint8, []stri
 		return bits | bit, custom
 	}
 	return bits, appendCustomMethod(custom, method)
+}
+
+func buildStaticAllowHeader(static map[string]map[string]HandleFunc, path string) (string, bool) {
+	var bits uint8
+	var custom []string
+	for method, routes := range static {
+		if routes == nil {
+			continue
+		}
+		if _, ok := routes[path]; ok {
+			bits, custom = addAllowedMethod(method, bits, custom)
+		}
+	}
+	if bits == 0 && len(custom) == 0 {
+		return "", false
+	}
+	if bits&allowMethodGet != 0 {
+		bits |= allowMethodHead
+	}
+	bits |= allowMethodOptions
+	return buildAllowHeader(bits, custom), true
 }
 
 func appendCustomMethod(custom []string, method string) []string {
