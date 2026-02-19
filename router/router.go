@@ -703,13 +703,14 @@ func (r *Router) serveMethodInTable(w http.ResponseWriter, req *http.Request, me
 
 func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (string, bool) {
 	r.mu.RLock()
-	methods := make(map[string]struct{}, 8)
+	var bits uint8
+	var custom []string
 	for method, m := range table.static {
 		if m == nil {
 			continue
 		}
 		if _, ok := m[matchPath]; ok {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -739,7 +740,7 @@ func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (str
 			}
 		}
 		if root.search(segs, 0, nil) != nil {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -748,61 +749,88 @@ func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (str
 	}
 	r.mu.RUnlock()
 
-	if len(methods) == 0 {
+	if bits == 0 && len(custom) == 0 {
 		return "", false
 	}
-	if _, ok := methods[http.MethodGet]; ok {
-		methods[http.MethodHead] = struct{}{}
+	if bits&allowMethodGet != 0 {
+		bits |= allowMethodHead
 	}
-	methods[http.MethodOptions] = struct{}{}
+	bits |= allowMethodOptions
 
-	return buildAllowHeader(methods), true
+	return buildAllowHeader(bits, custom), true
 }
 
-var methodOrder = []string{
-	http.MethodGet,
-	http.MethodHead,
-	http.MethodPost,
-	http.MethodPut,
-	http.MethodPatch,
-	http.MethodDelete,
-	http.MethodOptions,
+const (
+	allowMethodGet uint8 = 1 << iota
+	allowMethodHead
+	allowMethodPost
+	allowMethodPut
+	allowMethodPatch
+	allowMethodDelete
+	allowMethodOptions
+)
+
+type standardMethod struct {
+	method string
+	bit    uint8
 }
 
-var standardMethodSet = map[string]struct{}{
-	http.MethodGet:     {},
-	http.MethodHead:    {},
-	http.MethodPost:    {},
-	http.MethodPut:     {},
-	http.MethodPatch:   {},
-	http.MethodDelete:  {},
-	http.MethodOptions: {},
+var methodOrder = []standardMethod{
+	{method: http.MethodGet, bit: allowMethodGet},
+	{method: http.MethodHead, bit: allowMethodHead},
+	{method: http.MethodPost, bit: allowMethodPost},
+	{method: http.MethodPut, bit: allowMethodPut},
+	{method: http.MethodPatch, bit: allowMethodPatch},
+	{method: http.MethodDelete, bit: allowMethodDelete},
+	{method: http.MethodOptions, bit: allowMethodOptions},
 }
 
-func buildAllowHeader(methods map[string]struct{}) string {
-	if len(methods) == 0 {
+var standardMethodBits = map[string]uint8{
+	http.MethodGet:     allowMethodGet,
+	http.MethodHead:    allowMethodHead,
+	http.MethodPost:    allowMethodPost,
+	http.MethodPut:     allowMethodPut,
+	http.MethodPatch:   allowMethodPatch,
+	http.MethodDelete:  allowMethodDelete,
+	http.MethodOptions: allowMethodOptions,
+}
+
+func addAllowedMethod(method string, bits uint8, custom []string) (uint8, []string) {
+	if bit, ok := standardMethodBits[method]; ok {
+		return bits | bit, custom
+	}
+	return bits, appendCustomMethod(custom, method)
+}
+
+func appendCustomMethod(custom []string, method string) []string {
+	for i := range custom {
+		if custom[i] == method {
+			return custom
+		}
+	}
+	return append(custom, method)
+}
+
+func buildAllowHeader(bits uint8, custom []string) string {
+	if bits == 0 && len(custom) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	first := true
 
 	for _, method := range methodOrder {
-		if _, ok := methods[method]; ok {
+		if bits&method.bit != 0 {
 			if !first {
 				b.WriteString(", ")
 			}
-			b.WriteString(method)
+			b.WriteString(method.method)
 			first = false
 		}
 	}
 
-	var custom []string
-	for method := range methods {
-		if !isStandardMethod(method) {
-			custom = append(custom, method)
-		}
+	if len(custom) > 1 {
+		sort.Strings(custom)
 	}
-	sort.Strings(custom)
 	for _, method := range custom {
 		if !first {
 			b.WriteString(", ")
@@ -815,7 +843,7 @@ func buildAllowHeader(methods map[string]struct{}) string {
 }
 
 func isStandardMethod(method string) bool {
-	_, ok := standardMethodSet[method]
+	_, ok := standardMethodBits[method]
 	return ok
 }
 

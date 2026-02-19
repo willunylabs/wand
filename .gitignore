@@ -2,3 +2,7 @@
 docs/ownership-map-out/
 docs/security_best_practices_report.md
 docs/wand-threat-model.md
+
+# Benchmark artifacts (regenerate locally/CI)
+benchmarks/latest.txt
+benchmarks/compare.txt

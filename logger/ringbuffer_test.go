@@ -157,3 +157,37 @@ func TestRingBuffer_ConsumePanicHandler(t *testing.T) {
 		t.Fatal("timed out waiting for consumer to finish")
 	}
 }
+
+func TestNewRingBuffer_Validation(t *testing.T) {
+	if _, err := NewRingBuffer(0); err == nil {
+		t.Fatalf("expected error for zero capacity")
+	}
+	if _, err := NewRingBuffer(3); err == nil {
+		t.Fatalf("expected error for non-power-of-two capacity")
+	}
+	maxInt := ^uint(0) >> 1
+	if _, err := NewRingBuffer(uint64(maxInt) + 1); err == nil {
+		t.Fatalf("expected error for oversized capacity")
+	}
+}
+
+func TestRingBuffer_TryWrite_FullAndClosed(t *testing.T) {
+	rb, err := NewRingBuffer(2)
+	if err != nil {
+		t.Fatalf("failed to create ring buffer: %v", err)
+	}
+	if ok := rb.TryWrite(LogEvent{Message: "a"}); !ok {
+		t.Fatalf("expected first write to succeed")
+	}
+	if ok := rb.TryWrite(LogEvent{Message: "b"}); !ok {
+		t.Fatalf("expected second write to succeed")
+	}
+	if ok := rb.TryWrite(LogEvent{Message: "c"}); ok {
+		t.Fatalf("expected write to fail when buffer is full")
+	}
+
+	rb.Close()
+	if ok := rb.TryWrite(LogEvent{Message: "d"}); ok {
+		t.Fatalf("expected write to fail after close")
+	}
+}

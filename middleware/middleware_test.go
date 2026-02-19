@@ -1,8 +1,10 @@
 package middleware
 
 import (
+	"bufio"
 	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -76,6 +78,19 @@ func TestRequestID_NoGeneratorNoHeader(t *testing.T) {
 
 	if got := rec.Header().Get(HeaderRequestID); got != "" {
 		t.Fatalf("expected no request id header, got %q", got)
+	}
+}
+
+func TestDefaultRequestIDGenerator_Format(t *testing.T) {
+	id := defaultRequestIDGenerator()
+	if len(id) != 32 {
+		t.Fatalf("expected 32-char hex id, got %q", id)
+	}
+	for i := 0; i < len(id); i++ {
+		c := id[i]
+		if (c < '0' || c > '9') && (c < 'a' || c > 'f') {
+			t.Fatalf("expected lowercase hex id, got %q", id)
+		}
 	}
 }
 
@@ -250,6 +265,86 @@ func TestAccessLog_PanicStillLogs(t *testing.T) {
 	case <-done:
 	case <-time.After(200 * time.Millisecond):
 		t.Fatal("timed out waiting for consumer to finish")
+	}
+}
+
+type passthroughStatusRW struct {
+	header     http.Header
+	flushed    bool
+	hijacked   bool
+	pushedPath string
+	readBytes  int64
+}
+
+func (w *passthroughStatusRW) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *passthroughStatusRW) Write(b []byte) (int, error) { return len(b), nil }
+func (w *passthroughStatusRW) WriteHeader(int)             {}
+func (w *passthroughStatusRW) Flush()                      { w.flushed = true }
+
+func (w *passthroughStatusRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.hijacked = true
+	return nil, nil, nil
+}
+
+func (w *passthroughStatusRW) Push(target string, _ *http.PushOptions) error {
+	w.pushedPath = target
+	return nil
+}
+
+func (w *passthroughStatusRW) ReadFrom(r io.Reader) (int64, error) {
+	n, err := io.Copy(io.Discard, r)
+	w.readBytes += n
+	return n, err
+}
+
+func TestStatusWriter_PreservesInterfaces(t *testing.T) {
+	base := &passthroughStatusRW{}
+	sw := &statusWriter{ResponseWriter: base}
+
+	if got := sw.Unwrap(); got != base {
+		t.Fatalf("expected unwrap to return underlying writer")
+	}
+
+	sw.Flush()
+	if !base.flushed {
+		t.Fatalf("expected flush to be forwarded")
+	}
+
+	if err := sw.Push("/assets/app.js", nil); err != nil {
+		t.Fatalf("push failed: %v", err)
+	}
+	if base.pushedPath != "/assets/app.js" {
+		t.Fatalf("expected pushed path to be forwarded, got %q", base.pushedPath)
+	}
+
+	if _, _, err := sw.Hijack(); err != nil {
+		t.Fatalf("hijack failed: %v", err)
+	}
+	if !base.hijacked {
+		t.Fatalf("expected hijack to be forwarded")
+	}
+
+	n, err := sw.ReadFrom(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("readfrom failed: %v", err)
+	}
+	if n != 5 || sw.bytes != 5 || base.readBytes != 5 {
+		t.Fatalf("expected 5 bytes read, got n=%d sw.bytes=%d base.read=%d", n, sw.bytes, base.readBytes)
+	}
+}
+
+func TestStatusToUint16_Bounds(t *testing.T) {
+	if got := statusToUint16(0); got != 0 {
+		t.Fatalf("expected 0 for non-positive status, got %d", got)
+	}
+	if got := statusToUint16(70000); got != 0xffff {
+		t.Fatalf("expected clamp to 65535, got %d", got)
 	}
 }
 
@@ -474,6 +569,15 @@ func TestLogger_Default(t *testing.T) {
 	}
 }
 
+func TestLogger_Helper(t *testing.T) {
+	h := Logger(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	if h == nil {
+		t.Fatalf("expected logger helper to return a handler")
+	}
+}
+
 func TestLogger_Panic(t *testing.T) {
 	var buf strings.Builder
 	h := LoggerWith(LoggerOptions{
@@ -516,6 +620,27 @@ func TestLogger_JSON(t *testing.T) {
 	}
 	if !strings.Contains(line, "\"status\":201") {
 		t.Fatalf("expected status in json log, got %q", line)
+	}
+}
+
+func TestJSONFormatter(t *testing.T) {
+	line := JSONFormatter(LogEntry{
+		Time:       time.Unix(1700000000, 0),
+		Method:     http.MethodGet,
+		Path:       "/items",
+		Proto:      "HTTP/1.1",
+		Status:     http.StatusOK,
+		Bytes:      42,
+		Duration:   12 * time.Millisecond,
+		RemoteAddr: "127.0.0.1",
+		RequestID:  "rid-1",
+	})
+
+	if !strings.Contains(line, "\"method\":\"GET\"") {
+		t.Fatalf("expected method field in json formatter output, got %q", line)
+	}
+	if !strings.Contains(line, "\"duration_ms\":12") {
+		t.Fatalf("expected duration_ms in json formatter output, got %q", line)
 	}
 }
 

@@ -1,7 +1,10 @@
 package router
 
 import (
+	"bufio"
 	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -207,6 +210,95 @@ func TestRouter_Options(t *testing.T) {
 	}
 }
 
+func TestRouter_MethodHelpers(t *testing.T) {
+	r := NewRouter()
+	if err := r.PUT("/put", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register put failed: %v", err)
+	}
+	if err := r.PATCH("/patch", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register patch failed: %v", err)
+	}
+	if err := r.DELETE("/delete", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register delete failed: %v", err)
+	}
+	if err := r.OPTIONS("/opts", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register options failed: %v", err)
+	}
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPut, path: "/put"},
+		{method: http.MethodPatch, path: "/patch"},
+		{method: http.MethodDelete, path: "/delete"},
+		{method: http.MethodOptions, path: "/opts"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s %s expected 204 got %d", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+func TestGroup_MethodHelpers(t *testing.T) {
+	r := NewRouter()
+	api := r.Group("/api")
+	api.Use(func(next http.Handler) http.Handler { return next })
+
+	if err := api.HEAD("/head", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register group head failed: %v", err)
+	}
+	if err := api.PUT("/put", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register group put failed: %v", err)
+	}
+	if err := api.PATCH("/patch", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register group patch failed: %v", err)
+	}
+	if err := api.DELETE("/delete", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register group delete failed: %v", err)
+	}
+	if err := api.OPTIONS("/opts", func(w http.ResponseWriter, req *http.Request) { w.WriteHeader(http.StatusNoContent) }); err != nil {
+		t.Fatalf("register group options failed: %v", err)
+	}
+
+	cases := []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodHead, path: "/api/head"},
+		{method: http.MethodPut, path: "/api/put"},
+		{method: http.MethodPatch, path: "/api/patch"},
+		{method: http.MethodDelete, path: "/api/delete"},
+		{method: http.MethodOptions, path: "/api/opts"},
+	}
+	for _, tc := range cases {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(tc.method, tc.path, nil)
+		r.ServeHTTP(rec, req)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("%s %s expected 204 got %d", tc.method, tc.path, rec.Code)
+		}
+	}
+}
+
+func TestRedirectToRawPath(t *testing.T) {
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/static", nil)
+
+	redirectToRawPath(rec, req, "/assets%2Fapp.js")
+
+	if rec.Code != http.StatusMovedPermanently {
+		t.Fatalf("expected 301 got %d", rec.Code)
+	}
+	if got := rec.Header().Get("Location"); got != "/assets%2Fapp.js" {
+		t.Fatalf("expected encoded redirect path, got %q", got)
+	}
+}
+
 type flusherRW struct {
 	*httptest.ResponseRecorder
 	flushed bool
@@ -232,6 +324,67 @@ func TestRouter_Wrapper_PreservesFlusher(t *testing.T) {
 
 	if !w.flushed {
 		t.Fatalf("expected Flush to be forwarded to underlying ResponseWriter")
+	}
+}
+
+type passthroughRW struct {
+	header     http.Header
+	hijacked   bool
+	pushedPath string
+	readBytes  int64
+}
+
+func (w *passthroughRW) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+
+func (w *passthroughRW) Write(b []byte) (int, error) { return len(b), nil }
+func (w *passthroughRW) WriteHeader(int)             {}
+
+func (w *passthroughRW) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	w.hijacked = true
+	return nil, nil, nil
+}
+
+func (w *passthroughRW) Push(target string, _ *http.PushOptions) error {
+	w.pushedPath = target
+	return nil
+}
+
+func (w *passthroughRW) ReadFrom(r io.Reader) (int64, error) {
+	n, err := io.Copy(io.Discard, r)
+	w.readBytes += n
+	return n, err
+}
+
+func TestParamRW_PreservesInterfaces(t *testing.T) {
+	base := &passthroughRW{}
+	w := paramRW{ResponseWriter: base}
+
+	if got := w.Unwrap(); got != base {
+		t.Fatalf("expected unwrap to return original writer")
+	}
+	if err := w.Push("/assets/app.js", nil); err != nil {
+		t.Fatalf("push failed: %v", err)
+	}
+	if base.pushedPath != "/assets/app.js" {
+		t.Fatalf("expected pushed path to be forwarded, got %q", base.pushedPath)
+	}
+	if _, _, err := w.Hijack(); err != nil {
+		t.Fatalf("hijack failed: %v", err)
+	}
+	if !base.hijacked {
+		t.Fatalf("expected hijack to be forwarded")
+	}
+	n, err := w.ReadFrom(strings.NewReader("hello"))
+	if err != nil {
+		t.Fatalf("readfrom failed: %v", err)
+	}
+	if n != 5 || base.readBytes != 5 {
+		t.Fatalf("expected 5 bytes to be forwarded, got n=%d readBytes=%d", n, base.readBytes)
 	}
 }
 
@@ -1351,6 +1504,80 @@ func BenchmarkFrozen_Wildcard(b *testing.B) {
 	fr := mustFreeze(b, r)
 
 	req, _ := http.NewRequest("GET", "/static/css/styles.css", nil)
+	w := &nopRW{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		fr.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkRouter_MethodNotAllowed(b *testing.B) {
+	r := NewRouter()
+	mustGET(b, r, "/resource", func(w http.ResponseWriter, req *http.Request) {})
+	if err := r.POST("/resource", func(w http.ResponseWriter, req *http.Request) {}); err != nil {
+		b.Fatalf("register post failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	w := &nopRW{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkFrozen_MethodNotAllowed(b *testing.B) {
+	r := NewRouter()
+	mustGET(b, r, "/resource", func(w http.ResponseWriter, req *http.Request) {})
+	if err := r.POST("/resource", func(w http.ResponseWriter, req *http.Request) {}); err != nil {
+		b.Fatalf("register post failed: %v", err)
+	}
+	fr := mustFreeze(b, r)
+
+	req := httptest.NewRequest(http.MethodPatch, "/resource", nil)
+	w := &nopRW{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		fr.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkRouter_Options(b *testing.B) {
+	r := NewRouter()
+	mustGET(b, r, "/resource", func(w http.ResponseWriter, req *http.Request) {})
+	if err := r.POST("/resource", func(w http.ResponseWriter, req *http.Request) {}); err != nil {
+		b.Fatalf("register post failed: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodOptions, "/resource", nil)
+	w := &nopRW{}
+
+	b.ReportAllocs()
+	b.ResetTimer()
+
+	for i := 0; i < b.N; i++ {
+		r.ServeHTTP(w, req)
+	}
+}
+
+func BenchmarkFrozen_Options(b *testing.B) {
+	r := NewRouter()
+	mustGET(b, r, "/resource", func(w http.ResponseWriter, req *http.Request) {})
+	if err := r.POST("/resource", func(w http.ResponseWriter, req *http.Request) {}); err != nil {
+		b.Fatalf("register post failed: %v", err)
+	}
+	fr := mustFreeze(b, r)
+
+	req := httptest.NewRequest(http.MethodOptions, "/resource", nil)
 	w := &nopRW{}
 
 	b.ReportAllocs()

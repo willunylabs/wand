@@ -495,14 +495,15 @@ func (r *FrozenRouter) serveMethodInTable(w http.ResponseWriter, req *http.Reque
 }
 
 func (r *FrozenRouter) allowedMethodsInTable(matchPath string, table *frozenTable) (string, bool) {
-	methods := make(map[string]struct{}, 8)
+	var bits uint8
+	var custom []string
 
 	for method, m := range table.static {
 		if m == nil {
 			continue
 		}
 		if _, ok := m[matchPath]; ok {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -530,7 +531,7 @@ func (r *FrozenRouter) allowedMethodsInTable(matchPath string, table *frozenTabl
 			}
 		}
 		if root.search(segs, 0, nil) != nil {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -538,15 +539,15 @@ func (r *FrozenRouter) allowedMethodsInTable(matchPath string, table *frozenTabl
 		r.partsPool.Put(segs)
 	}
 
-	if len(methods) == 0 {
+	if bits == 0 && len(custom) == 0 {
 		return "", false
 	}
-	if _, ok := methods[http.MethodGet]; ok {
-		methods[http.MethodHead] = struct{}{}
+	if bits&allowMethodGet != 0 {
+		bits |= allowMethodHead
 	}
-	methods[http.MethodOptions] = struct{}{}
+	bits |= allowMethodOptions
 
-	return buildAllowHeader(methods), true
+	return buildAllowHeader(bits, custom), true
 }
 
 func (n *frozenNode) search(segs *pathSegments, height int, params *Params) *frozenNode {

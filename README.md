@@ -29,8 +29,8 @@ If you need a batteries-included framework, consider Gin or Echo. If you want co
 - **Zero Allocation**: Optimized hot paths (static, dynamic, and wildcard routes) generate **0 bytes** of garbage per request.
 - **Zero-Alloc Param Extraction**: Params are captured via pooled slices and index offsets—no maps or context allocations.
 - **High Performance**: 
-    - **Static Routes**: ~35ns
-    - **Dynamic Routes**: ~100ns
+    - **Static Routes**: ~41ns
+    - **Dynamic Routes**: ~105ns
 - **DoS Protection**: Built-in limits for `MaxPathLength` (4096) and `MaxDepth` (50) to prevent algorithmic complexity attacks.
 - **Frozen Mode**: Innovative `FrozenRouter` flattens static path segments for extreme read-heavy performance.
 - **Lock-Free Logger**: Specific high-throughput `RingBuffer` logger implementation.
@@ -147,6 +147,7 @@ third-party middleware (JWT, OTEL, Prometheus, etc.) directly:
 - `docs/integrations.md` — compression, rate limiting, trusted proxy parsing.
 - `docs/observability.md` — Prometheus/OTel/pprof integration.
 - `docs/auth.md` — auth interfaces with JWT/session examples.
+- `docs/migration_gin_echo.md` — minimal migration examples from Gin/Echo.
 
 ## Server Best Practices
 
@@ -180,6 +181,19 @@ Wand will **not** include:
 
 ## Performance
 
+### Router Microbench (2026-02-15)
+
+Run on Apple M4 Pro with Go 1.24.12:
+
+| Benchmark | ns/op | B/op | allocs/op |
+| :--- | ---: | ---: | ---: |
+| `BenchmarkRouter_Static` | 41.48 | 0 | 0 |
+| `BenchmarkRouter_Dynamic` | 105.4 | 0 | 0 |
+| `BenchmarkRouter_Wildcard` | 82.23 | 0 | 0 |
+| `BenchmarkFrozen_Static` | 38.71 | 0 | 0 |
+| `BenchmarkFrozen_Dynamic` | 112.5 | 0 | 0 |
+| `BenchmarkFrozen_Wildcard` | 85.30 | 0 | 0 |
+
 ### GitHub API Benchmark
 
 Comparative results for the [GitHub API routing benchmark](https://github.com/smallnest/go-web-framework-benchmark).
@@ -202,6 +216,7 @@ Run on Apple M4 Pro (Go 1.23).
 ## Quality Gates
 
 - CI: build, `go vet`, tests, and race (`.github/workflows/ci.yml`).
+- Coverage gate: `scripts/coverage-check.sh` (default thresholds: total >= 78%, router >= 80%, middleware >= 78%, logger >= 90%, auth >= 80%).
 - Lint: `golangci-lint` (`.github/workflows/linter.yml`).
 - Security: `govulncheck` (`.github/workflows/vuln.yml`).
 - Static analysis: `gosec` (`.github/workflows/security.yml`).

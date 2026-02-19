@@ -1,4 +1,4 @@
-.PHONY: test race bench fuzz lint soak
+.PHONY: test race bench fuzz lint soak coverage
 
 test:
 	go test ./...
@@ -17,3 +17,6 @@ lint:
 
 soak:
 	./scripts/soak.sh
+
+coverage:
+	./scripts/coverage-check.sh
