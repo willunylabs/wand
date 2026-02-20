@@ -25,6 +25,8 @@ const (
 	slotEmpty   = 0
 	slotWriting = 1
 	slotReady   = 2
+
+	producerSpinLimit = 8
 )
 
 // RingBuffer is a high-performance lock-free ring buffer (MPSC).
@@ -101,6 +103,7 @@ func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 	if atomic.LoadUint32(&rb.closed) != 0 {
 		return false
 	}
+	retries := 0
 	for {
 		head := atomic.LoadUint64(&rb.head)
 		tail := atomic.LoadUint64(&rb.tail)
@@ -113,8 +116,9 @@ func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 			// Success reserving slot `head`
 			slotIdx := head & rb.mask
 
+			wait := 0
 			for atomic.LoadUint32(&rb.state[slotIdx]) != slotEmpty {
-				runtime.Gosched() // Prevent starvation
+				backoff(&wait)
 			}
 
 			// Mark as Writing
@@ -127,8 +131,8 @@ func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 			atomic.StoreUint32(&rb.state[slotIdx], slotReady)
 			return true
 		}
-		// CAS failed, retry
-		runtime.Gosched() // Allow other goroutines to progress
+		// CAS failed, retry with bounded spin and exponential backoff.
+		backoff(&retries)
 	}
 }
 
@@ -230,4 +234,18 @@ func consumeBatch(handler func([]LogEvent), panicHandler func(any), batch []LogE
 		}
 	}()
 	handler(batch)
+}
+
+func backoff(retries *int) {
+	if *retries < producerSpinLimit {
+		runtime.Gosched()
+		*retries = *retries + 1
+		return
+	}
+	shift := *retries - producerSpinLimit
+	if shift > 10 {
+		shift = 10
+	}
+	time.Sleep(time.Microsecond << shift)
+	*retries = *retries + 1
 }

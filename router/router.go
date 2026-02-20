@@ -56,9 +56,12 @@ func Param(w http.ResponseWriter, key string) (string, bool) {
 }
 
 type routeTable struct {
-	roots     map[string]*node
-	static    map[string]map[string]HandleFunc
-	hasParams map[string]bool
+	roots       map[string]*node
+	static      map[string]map[string]HandleFunc
+	staticAllow map[string]string
+	hasParams   map[string]bool
+	anyParams   bool
+	hasTrailing bool
 }
 
 // Router holds the routing tree.
@@ -148,9 +151,10 @@ func (w paramRW) ReadFrom(r io.Reader) (int64, error) {
 func NewRouter() *Router {
 	return &Router{
 		table: routeTable{
-			roots:     make(map[string]*node),
-			static:    make(map[string]map[string]HandleFunc),
-			hasParams: make(map[string]bool),
+			roots:       make(map[string]*node),
+			static:      make(map[string]map[string]HandleFunc),
+			staticAllow: make(map[string]string),
+			hasParams:   make(map[string]bool),
 		},
 		hosts: make(map[string]*routeTable),
 		// Best-practice default: normalize trailing slashes with redirects.
@@ -289,19 +293,51 @@ func normalizeHost(host string) string {
 	if host == "" {
 		return ""
 	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+
+	// Fast path: common host without port.
+	if strings.IndexByte(host, ':') == -1 && host[0] != '[' {
+		return lowerASCII(host)
+	}
+
+	// Bracketed IPv6: [addr] or [addr]:port
+	if host[0] == '[' {
+		if end := strings.IndexByte(host, ']'); end > 0 {
+			addr := host[1:end]
+			if end == len(host)-1 {
+				return lowerASCII(addr)
+			}
+			if end+1 < len(host) && host[end+1] == ':' && isDigits(host[end+2:]) {
+				return lowerASCII(addr)
+			}
+		}
+		return lowerASCII(host)
+	}
+
+	// Non-bracket host:port. Preserve invalid forms as-is.
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && strings.IndexByte(host, ':') == i && isDigits(host[i+1:]) {
+		host = host[:i]
 	}
 	return lowerASCII(host)
 }
 
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
+}
+
 func newRouteTable() *routeTable {
 	return &routeTable{
-		roots:     make(map[string]*node),
-		static:    make(map[string]map[string]HandleFunc),
-		hasParams: make(map[string]bool),
+		roots:       make(map[string]*node),
+		static:      make(map[string]map[string]HandleFunc),
+		staticAllow: make(map[string]string),
+		hasParams:   make(map[string]bool),
 	}
 }
 
@@ -450,8 +486,12 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 	err := root.insert(matchPattern, matchParts, 0, handler, hasParams)
 	if err == nil {
 		r.routesCount++
+		if len(matchPattern) > 1 && matchPattern[len(matchPattern)-1] == '/' {
+			table.hasTrailing = true
+		}
 		if hasParams {
 			table.hasParams[method] = true
+			table.anyParams = true
 		} else {
 			m := table.static[method]
 			if m == nil {
@@ -459,6 +499,9 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 				table.static[method] = m
 			}
 			m[matchPattern] = handler
+			if allow, ok := buildStaticAllowHeader(table.static, matchPattern); ok {
+				table.staticAllow[matchPattern] = allow
+			}
 		}
 	}
 	r.mu.Unlock()
@@ -590,6 +633,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *routeTable) bool {
+	// Fast skip for the common "no trailing slash route exists" case.
+	if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+		return false
+	}
 	altMatch, ok := alternatePath(ctx.matchPath)
 	if !ok || altMatch == ctx.matchPath {
 		return false
@@ -613,6 +660,9 @@ func (r *Router) handleMethodNotAllowedInTable(w http.ResponseWriter, req *http.
 		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
 	}
 	if !r.StrictSlash {
+		if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+			return false
+		}
 		if altMatch, ok := alternatePath(ctx.matchPath); ok {
 			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
 				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
@@ -703,13 +753,23 @@ func (r *Router) serveMethodInTable(w http.ResponseWriter, req *http.Request, me
 
 func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (string, bool) {
 	r.mu.RLock()
-	methods := make(map[string]struct{}, 8)
+	if !table.anyParams {
+		if allow, ok := table.staticAllow[matchPath]; ok {
+			r.mu.RUnlock()
+			return allow, true
+		}
+		r.mu.RUnlock()
+		return "", false
+	}
+
+	var bits uint8
+	var custom []string
 	for method, m := range table.static {
 		if m == nil {
 			continue
 		}
 		if _, ok := m[matchPath]; ok {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -739,7 +799,7 @@ func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (str
 			}
 		}
 		if root.search(segs, 0, nil) != nil {
-			methods[method] = struct{}{}
+			bits, custom = addAllowedMethod(method, bits, custom)
 		}
 	}
 
@@ -748,61 +808,109 @@ func (r *Router) allowedMethodsInTable(matchPath string, table *routeTable) (str
 	}
 	r.mu.RUnlock()
 
-	if len(methods) == 0 {
+	if bits == 0 && len(custom) == 0 {
 		return "", false
 	}
-	if _, ok := methods[http.MethodGet]; ok {
-		methods[http.MethodHead] = struct{}{}
+	if bits&allowMethodGet != 0 {
+		bits |= allowMethodHead
 	}
-	methods[http.MethodOptions] = struct{}{}
+	bits |= allowMethodOptions
 
-	return buildAllowHeader(methods), true
+	return buildAllowHeader(bits, custom), true
 }
 
-var methodOrder = []string{
-	http.MethodGet,
-	http.MethodHead,
-	http.MethodPost,
-	http.MethodPut,
-	http.MethodPatch,
-	http.MethodDelete,
-	http.MethodOptions,
+const (
+	allowMethodGet uint8 = 1 << iota
+	allowMethodHead
+	allowMethodPost
+	allowMethodPut
+	allowMethodPatch
+	allowMethodDelete
+	allowMethodOptions
+)
+
+type standardMethod struct {
+	method string
+	bit    uint8
 }
 
-var standardMethodSet = map[string]struct{}{
-	http.MethodGet:     {},
-	http.MethodHead:    {},
-	http.MethodPost:    {},
-	http.MethodPut:     {},
-	http.MethodPatch:   {},
-	http.MethodDelete:  {},
-	http.MethodOptions: {},
+var methodOrder = []standardMethod{
+	{method: http.MethodGet, bit: allowMethodGet},
+	{method: http.MethodHead, bit: allowMethodHead},
+	{method: http.MethodPost, bit: allowMethodPost},
+	{method: http.MethodPut, bit: allowMethodPut},
+	{method: http.MethodPatch, bit: allowMethodPatch},
+	{method: http.MethodDelete, bit: allowMethodDelete},
+	{method: http.MethodOptions, bit: allowMethodOptions},
 }
 
-func buildAllowHeader(methods map[string]struct{}) string {
-	if len(methods) == 0 {
+var standardMethodBits = map[string]uint8{
+	http.MethodGet:     allowMethodGet,
+	http.MethodHead:    allowMethodHead,
+	http.MethodPost:    allowMethodPost,
+	http.MethodPut:     allowMethodPut,
+	http.MethodPatch:   allowMethodPatch,
+	http.MethodDelete:  allowMethodDelete,
+	http.MethodOptions: allowMethodOptions,
+}
+
+func addAllowedMethod(method string, bits uint8, custom []string) (uint8, []string) {
+	if bit, ok := standardMethodBits[method]; ok {
+		return bits | bit, custom
+	}
+	return bits, appendCustomMethod(custom, method)
+}
+
+func buildStaticAllowHeader(static map[string]map[string]HandleFunc, path string) (string, bool) {
+	var bits uint8
+	var custom []string
+	for method, routes := range static {
+		if routes == nil {
+			continue
+		}
+		if _, ok := routes[path]; ok {
+			bits, custom = addAllowedMethod(method, bits, custom)
+		}
+	}
+	if bits == 0 && len(custom) == 0 {
+		return "", false
+	}
+	if bits&allowMethodGet != 0 {
+		bits |= allowMethodHead
+	}
+	bits |= allowMethodOptions
+	return buildAllowHeader(bits, custom), true
+}
+
+func appendCustomMethod(custom []string, method string) []string {
+	for i := range custom {
+		if custom[i] == method {
+			return custom
+		}
+	}
+	return append(custom, method)
+}
+
+func buildAllowHeader(bits uint8, custom []string) string {
+	if bits == 0 && len(custom) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	first := true
 
 	for _, method := range methodOrder {
-		if _, ok := methods[method]; ok {
+		if bits&method.bit != 0 {
 			if !first {
 				b.WriteString(", ")
 			}
-			b.WriteString(method)
+			b.WriteString(method.method)
 			first = false
 		}
 	}
 
-	var custom []string
-	for method := range methods {
-		if !isStandardMethod(method) {
-			custom = append(custom, method)
-		}
+	if len(custom) > 1 {
+		sort.Strings(custom)
 	}
-	sort.Strings(custom)
 	for _, method := range custom {
 		if !first {
 			b.WriteString(", ")
@@ -812,11 +920,6 @@ func buildAllowHeader(methods map[string]struct{}) string {
 	}
 
 	return b.String()
-}
-
-func isStandardMethod(method string) bool {
-	_, ok := standardMethodSet[method]
-	return ok
 }
 
 func isValidMethod(method string) bool {

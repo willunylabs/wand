@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        go-version: ['1.24.x']
+        go-version: ['1.24.13']
     steps:
     - uses: actions/checkout@v4
 
@@ -30,9 +30,18 @@ jobs:
     - name: Test
       run: go test -v ./...
 
+    - name: Coverage Gate
+      run: ./scripts/coverage-check.sh
+
     - name: Test (race)
-      if: matrix.go-version == '1.24.x'
+      if: matrix.go-version == '1.24.13'
       run: go test -race ./...
 
     - name: Fuzz Parity (short)
       run: go test ./router -run=^$ -fuzz=FuzzRouter_FrozenParity -fuzztime=5s
+
+    - name: Bench
+      run: ./scripts/bench.sh
+
+    - name: Benchmark Regression Gate
+      run: ./scripts/bench-compare.sh

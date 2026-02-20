@@ -20,7 +20,7 @@ srv := &http.Server{
 
 ## 2. Go Toolchain
 
-- Use **Go 1.24.12+** (patched standard library).
+- Use **Go 1.24.13+** (patched standard library).
 - Keep Go patch versions up to date to receive security fixes.
 
 ## 3. Reverse Proxy Alignment
@@ -29,6 +29,36 @@ If running behind Nginx/Envoy/Cloudflare:
 - **Normalize once**: avoid double decoding of `%2F`, `%2e`, etc.
 - **Match timeouts**: proxy timeouts should be >= app timeouts.
 - **Limit request size** at the proxy as the first line of defense.
+
+### Example Configs
+
+#### Nginx (keep URI handling predictable)
+
+```nginx
+location / {
+    proxy_pass http://app_upstream;
+    proxy_http_version 1.1;
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_set_header X-Forwarded-Host $host;
+    client_max_body_size 10m;
+}
+```
+
+#### Envoy (single normalization layer)
+
+```yaml
+http_connection_manager:
+  normalize_path: true
+  merge_slashes: true
+  path_with_escaped_slashes_action: KEEP_UNCHANGED
+```
+
+#### Cloudflare
+
+- If your origin uses default decoded matching, keep URL normalization at the edge and keep `UseRawPath=false`.
+- If your origin intentionally matches encoded routes (`UseRawPath=true`), avoid path rewrite/normalization rules that change escaped path semantics before requests reach origin.
 
 ## 4. Trusted Proxy Headers (X-Forwarded-*)
 

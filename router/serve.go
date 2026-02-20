@@ -2,6 +2,8 @@ package router
 
 import "net/http"
 
+const allowHeaderKey = "Allow"
+
 // routeContext holds the preprocessed request information for routing.
 // This avoids recalculating these values in both Router and FrozenRouter.
 type routeContext struct {
@@ -62,7 +64,7 @@ func prepareRouteContext(w http.ResponseWriter, req *http.Request, useRawPath, i
 
 // respondMethodNotAllowed writes the 405 response with Allow header.
 func respondMethodNotAllowed(w http.ResponseWriter, req *http.Request, allow string, handler HandleFunc) bool {
-	w.Header().Set("Allow", allow)
+	setAllowHeader(w, allow)
 	if req.Method == http.MethodOptions {
 		w.WriteHeader(http.StatusOK)
 		return true
@@ -73,6 +75,16 @@ func respondMethodNotAllowed(w http.ResponseWriter, req *http.Request, allow str
 	}
 	w.WriteHeader(http.StatusMethodNotAllowed)
 	return true
+}
+
+func setAllowHeader(w http.ResponseWriter, allow string) {
+	h := w.Header()
+	if values, ok := h[allowHeaderKey]; ok && len(values) > 0 {
+		values[0] = allow
+		h[allowHeaderKey] = values[:1]
+		return
+	}
+	h[allowHeaderKey] = []string{allow}
 }
 
 // alternatePath returns the path with the trailing slash toggled.

@@ -3,14 +3,25 @@
 All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
-### Breaking
-- Require Go 1.24.12+ (security-patched standard library).
+### Added
+- Coverage gate script (`scripts/coverage-check.sh`) and CI coverage thresholds.
+- New tests for `auth` interfaces, `router` wrapper pass-through behavior, and `middleware` status-writer pass-through behavior.
+- New router benchmarks for `405 Method Not Allowed` and `OPTIONS`.
+- Migration guide from Gin/Echo (`docs/migration_gin_echo.md`).
 
 ### Changed
-- CI now targets Go 1.24.x only.
+- Go toolchain is now pinned with `toolchain go1.24.13` in `go.mod`.
+- CI/workflows now use fixed Go patch version `1.24.13`.
+- `gosec` and `govulncheck` installs are pinned to fixed versions in workflows.
+- `allowedMethodsInTable` now uses a standard-method bitset plus custom-method slice instead of per-request map aggregation.
+- `allowedMethodsInTable` now has a static-route fast path cache, reducing `405/OPTIONS` overhead and allocations.
+- `RingBuffer.TryWrite` now uses bounded spin + exponential backoff under contention.
+- Benchmark comparison no longer depends on runtime `benchstat` installation; regression checks now run via a deterministic local parser script.
+- Bench baseline refreshed and benchmark docs updated.
 
 ## [1.0.0] - 2026-02-03
 ### Breaking
+- Require Go 1.24.13+ (security-patched standard library).
 - `RegisterPprof` now requires an explicit allow policy via `RegisterPprofWith` (returns error otherwise).
 
 ### Added
@@ -21,6 +32,7 @@ All notable changes to this project will be documented in this file.
 - CI hardening: `-race` in CI, gosec, govulncheck, SBOM generation, and dependabot.
 
 ### Changed
+- CI now targets Go 1.24.x only.
 - Request IDs are now cryptographically random by default (fallback to counter on RNG failure).
 - Text logs sanitize CR/LF to prevent log injection.
 - CORS rejects wildcard origin with credentials for safety.
