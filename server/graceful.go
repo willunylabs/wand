@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+var (
+	listenAndServe = func(srv *http.Server) error {
+		return srv.ListenAndServe()
+	}
+	shutdownServer = func(srv *http.Server, ctx context.Context) error {
+		return srv.Shutdown(ctx)
+	}
+)
+
 // SignalContext returns a context cancelled on SIGINT or SIGTERM.
 // [Lifecycle]:
 // This is the standard way to hook OS signals into the Go context tree.
@@ -35,7 +44,7 @@ func Run(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration) e
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		if err := listenAndServe(srv); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 			return
 		}
@@ -46,7 +55,7 @@ func Run(ctx context.Context, srv *http.Server, shutdownTimeout time.Duration) e
 	case <-ctx.Done():
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
-		return srv.Shutdown(shutdownCtx)
+		return shutdownServer(srv, shutdownCtx)
 	case err := <-errCh:
 		return err
 	}
