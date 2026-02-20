@@ -293,12 +293,43 @@ func normalizeHost(host string) string {
 	if host == "" {
 		return ""
 	}
-	if h, _, err := net.SplitHostPort(host); err == nil {
-		host = h
-	} else if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
-		host = strings.TrimSuffix(strings.TrimPrefix(host, "["), "]")
+
+	// Fast path: common host without port.
+	if strings.IndexByte(host, ':') == -1 && host[0] != '[' {
+		return lowerASCII(host)
+	}
+
+	// Bracketed IPv6: [addr] or [addr]:port
+	if host[0] == '[' {
+		if end := strings.IndexByte(host, ']'); end > 0 {
+			addr := host[1:end]
+			if end == len(host)-1 {
+				return lowerASCII(addr)
+			}
+			if end+1 < len(host) && host[end+1] == ':' && isDigits(host[end+2:]) {
+				return lowerASCII(addr)
+			}
+		}
+		return lowerASCII(host)
+	}
+
+	// Non-bracket host:port. Preserve invalid forms as-is.
+	if i := strings.LastIndexByte(host, ':'); i >= 0 && strings.IndexByte(host, ':') == i && isDigits(host[i+1:]) {
+		host = host[:i]
 	}
 	return lowerASCII(host)
+}
+
+func isDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func newRouteTable() *routeTable {

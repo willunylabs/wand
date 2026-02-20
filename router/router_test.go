@@ -1038,6 +1038,29 @@ func TestRouter_HostWithPort(t *testing.T) {
 	}
 }
 
+func TestNormalizeHost(t *testing.T) {
+	cases := []struct {
+		in   string
+		want string
+	}{
+		{in: "", want: ""},
+		{in: " api.example.com ", want: "api.example.com"},
+		{in: "API.EXAMPLE.COM", want: "api.example.com"},
+		{in: "api.example.com:8080", want: "api.example.com"},
+		{in: "api.example.com:abc", want: "api.example.com:abc"},
+		{in: "api.example.com:", want: "api.example.com:"},
+		{in: ":8080", want: ""},
+		{in: "[2001:db8::1]", want: "2001:db8::1"},
+		{in: "[2001:db8::1]:8443", want: "2001:db8::1"},
+		{in: "[2001:db8::1]:abc", want: "[2001:db8::1]:abc"},
+	}
+	for _, tc := range cases {
+		if got := normalizeHost(tc.in); got != tc.want {
+			t.Fatalf("normalizeHost(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
+
 func TestRouter_HostFallbackToDefault(t *testing.T) {
 	r := NewRouter()
 	mustGET(t, r, "/ping", func(w http.ResponseWriter, req *http.Request) {
