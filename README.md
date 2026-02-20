@@ -181,18 +181,22 @@ Wand will **not** include:
 
 ## Performance
 
-### Router Microbench (2026-02-15)
+### Router Microbench (2026-02-20)
 
-Run on Apple M4 Pro with Go 1.24.13:
+Run on Apple M4 Pro (local run):
 
 | Benchmark | ns/op | B/op | allocs/op |
 | :--- | ---: | ---: | ---: |
-| `BenchmarkRouter_Static` | 41.48 | 0 | 0 |
-| `BenchmarkRouter_Dynamic` | 105.4 | 0 | 0 |
-| `BenchmarkRouter_Wildcard` | 82.23 | 0 | 0 |
-| `BenchmarkFrozen_Static` | 38.71 | 0 | 0 |
-| `BenchmarkFrozen_Dynamic` | 112.5 | 0 | 0 |
-| `BenchmarkFrozen_Wildcard` | 85.30 | 0 | 0 |
+| `BenchmarkRouter_Static` | 43.32 | 0 | 0 |
+| `BenchmarkRouter_Dynamic` | 107.4 | 0 | 0 |
+| `BenchmarkRouter_Wildcard` | 85.86 | 0 | 0 |
+| `BenchmarkFrozen_Static` | 39.83 | 0 | 0 |
+| `BenchmarkFrozen_Dynamic` | 112.9 | 0 | 0 |
+| `BenchmarkFrozen_Wildcard` | 90.13 | 0 | 0 |
+| `BenchmarkRouter_MethodNotAllowed` | 56.28 | 0 | 0 |
+| `BenchmarkFrozen_MethodNotAllowed` | 51.45 | 0 | 0 |
+| `BenchmarkRouter_Options` | 55.27 | 0 | 0 |
+| `BenchmarkFrozen_Options` | 51.15 | 0 | 0 |
 
 ### GitHub API Benchmark
 
@@ -216,7 +220,7 @@ Run on Apple M4 Pro (Go 1.23).
 ## Quality Gates
 
 - CI: build, `go vet`, tests, and race (`.github/workflows/ci.yml`).
-- Coverage gate: `scripts/coverage-check.sh` (default thresholds: total >= 78%, router >= 80%, middleware >= 78%, logger >= 90%, auth >= 80%).
+- Coverage gate: `scripts/coverage-check.sh` (default thresholds: total >= 80%, router >= 80%, middleware >= 78%, logger >= 90%, auth >= 80%).
 - Lint: `golangci-lint` (`.github/workflows/linter.yml`).
 - Security: `govulncheck` (`.github/workflows/vuln.yml`).
 - Static analysis: `gosec` (`.github/workflows/security.yml`).

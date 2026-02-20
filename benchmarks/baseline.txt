@@ -2,15 +2,15 @@ goos: darwin
 goarch: arm64
 pkg: github.com/willunylabs/wand/router
 cpu: Apple M4 Pro
-BenchmarkRouter_Dynamic-14             	 9974029	       105.4 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRouter_Static-14              	29212390	        41.48 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRouter_Wildcard-14            	13965903	        82.23 ns/op	       0 B/op	       0 allocs/op
-BenchmarkFrozen_Dynamic-14             	10470891	       112.5 ns/op	       0 B/op	       0 allocs/op
-BenchmarkFrozen_Static-14              	30833169	        38.71 ns/op	       0 B/op	       0 allocs/op
-BenchmarkFrozen_Wildcard-14            	14152862	        85.30 ns/op	       0 B/op	       0 allocs/op
-BenchmarkRouter_MethodNotAllowed-14    	 4814073	       248.0 ns/op	     120 B/op	       6 allocs/op
-BenchmarkFrozen_MethodNotAllowed-14    	 5006011	       239.6 ns/op	     120 B/op	       6 allocs/op
-BenchmarkRouter_Options-14             	 4840197	       246.8 ns/op	     120 B/op	       6 allocs/op
-BenchmarkFrozen_Options-14             	 4947663	       240.3 ns/op	     120 B/op	       6 allocs/op
+BenchmarkRouter_Dynamic-14             	10400539	       107.4 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter_Static-14              	27559016	        43.32 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter_Wildcard-14            	13909689	        85.86 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFrozen_Dynamic-14             	10809654	       112.9 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFrozen_Static-14              	30200739	        39.83 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFrozen_Wildcard-14            	13594196	        90.13 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter_MethodNotAllowed-14    	21595906	        56.28 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFrozen_MethodNotAllowed-14    	23482407	        51.45 ns/op	       0 B/op	       0 allocs/op
+BenchmarkRouter_Options-14             	21331689	        55.27 ns/op	       0 B/op	       0 allocs/op
+BenchmarkFrozen_Options-14             	23036406	        51.15 ns/op	       0 B/op	       0 allocs/op
 PASS
-ok  	github.com/willunylabs/wand/router	13.693s
+ok  	github.com/willunylabs/wand/router	13.085s

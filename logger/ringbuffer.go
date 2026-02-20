@@ -27,6 +27,8 @@ const (
 	slotReady   = 2
 
 	producerSpinLimit = 8
+	slotSpinLimit     = 8
+	maxBackoffShift   = 10
 )
 
 // RingBuffer is a high-performance lock-free ring buffer (MPSC).
@@ -116,9 +118,9 @@ func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 			// Success reserving slot `head`
 			slotIdx := head & rb.mask
 
-			wait := 0
+			slotRetries := 0
 			for atomic.LoadUint32(&rb.state[slotIdx]) != slotEmpty {
-				backoff(&wait)
+				backoffSlot(&slotRetries)
 			}
 
 			// Mark as Writing
@@ -132,7 +134,7 @@ func (rb *RingBuffer) TryWrite(event LogEvent) bool {
 			return true
 		}
 		// CAS failed, retry with bounded spin and exponential backoff.
-		backoff(&retries)
+		backoffCAS(&retries)
 	}
 }
 
@@ -236,15 +238,23 @@ func consumeBatch(handler func([]LogEvent), panicHandler func(any), batch []LogE
 	handler(batch)
 }
 
-func backoff(retries *int) {
-	if *retries < producerSpinLimit {
+func backoffCAS(retries *int) {
+	backoffWithLimit(retries, producerSpinLimit)
+}
+
+func backoffSlot(retries *int) {
+	backoffWithLimit(retries, slotSpinLimit)
+}
+
+func backoffWithLimit(retries *int, spinLimit int) {
+	if *retries < spinLimit {
 		runtime.Gosched()
 		*retries = *retries + 1
 		return
 	}
-	shift := *retries - producerSpinLimit
-	if shift > 10 {
-		shift = 10
+	shift := *retries - spinLimit
+	if shift > maxBackoffShift {
+		shift = maxBackoffShift
 	}
 	time.Sleep(time.Microsecond << shift)
 	*retries = *retries + 1

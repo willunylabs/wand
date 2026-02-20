@@ -98,11 +98,16 @@ func TestRingBuffer_Concurrent(t *testing.T) {
 
 func BenchmarkRingBuffer_Throughput(b *testing.B) {
 	rb, _ := NewRingBuffer(4096)
+	done := make(chan struct{})
 
-	go rb.Consume(func(events []LogEvent) {
-		// No-op consumer
-	})
+	go func() {
+		rb.Consume(func(events []LogEvent) {
+			// No-op consumer
+		})
+		close(done)
+	}()
 
+	b.ReportAllocs()
 	b.ResetTimer()
 	b.RunParallel(func(pb *testing.PB) {
 		evt := LogEvent{Message: "bench"}
@@ -112,6 +117,78 @@ func BenchmarkRingBuffer_Throughput(b *testing.B) {
 			}
 		}
 	})
+	b.StopTimer()
+	rb.Close()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		b.Fatal("timed out waiting for consumer shutdown")
+	}
+}
+
+func BenchmarkRingBuffer_Contention(b *testing.B) {
+	rb, _ := NewRingBuffer(256)
+	done := make(chan struct{})
+
+	go func() {
+		rb.Consume(func(events []LogEvent) {
+			// No-op consumer
+		})
+		close(done)
+	}()
+
+	b.SetParallelism(16)
+	b.ReportAllocs()
+	b.ResetTimer()
+	b.RunParallel(func(pb *testing.PB) {
+		evt := LogEvent{Message: "contention"}
+		for pb.Next() {
+			for !rb.TryWrite(evt) {
+				runtime.Gosched()
+			}
+		}
+	})
+	b.StopTimer()
+	rb.Close()
+	select {
+	case <-done:
+	case <-time.After(500 * time.Millisecond):
+		b.Fatal("timed out waiting for consumer shutdown")
+	}
+}
+
+func BenchmarkRingBuffer_TryWriteFull(b *testing.B) {
+	rb, _ := NewRingBuffer(2)
+	if !rb.TryWrite(LogEvent{Message: "a"}) || !rb.TryWrite(LogEvent{Message: "b"}) {
+		b.Fatal("failed to prefill ring buffer")
+	}
+
+	evt := LogEvent{Message: "full"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if rb.TryWrite(evt) {
+			b.Fatal("unexpected successful write on full ring buffer")
+		}
+	}
+}
+
+func TestRingBuffer_BackoffProgression(t *testing.T) {
+	retries := 0
+	for i := 0; i < producerSpinLimit+4; i++ {
+		backoffCAS(&retries)
+	}
+	if retries != producerSpinLimit+4 {
+		t.Fatalf("unexpected retries count: got %d", retries)
+	}
+
+	retries = 0
+	for i := 0; i < slotSpinLimit+4; i++ {
+		backoffSlot(&retries)
+	}
+	if retries != slotSpinLimit+4 {
+		t.Fatalf("unexpected slot retries count: got %d", retries)
+	}
 }
 
 func TestRingBuffer_ConsumePanicHandler(t *testing.T) {
