@@ -3,11 +3,14 @@ package main
 import (
 	"crypto/rand"
 	"encoding/binary"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -16,64 +19,121 @@ import (
 	"github.com/willunylabs/wand/router"
 )
 
+type soakConfig struct {
+	duration    time.Duration
+	concurrency int
+	rps         int
+}
+
 func main() {
-	duration := flag.Duration("duration", 1*time.Minute, "total test duration")
-	concurrency := flag.Int("concurrency", 64, "number of worker goroutines")
-	rps := flag.Int("rps", 1000, "approximate total requests per second (0 for unlimited)")
-	flag.Parse()
+	os.Exit(runCLI(os.Args[1:], os.Stdout, os.Stderr))
+}
+
+func runCLI(args []string, stdout, stderr io.Writer) int {
+	cfg, err := parseSoakConfig(args)
+	if err != nil {
+		_, _ = fmt.Fprintf(stderr, "soak failed: %v\n", err)
+		return 2
+	}
+	if err := runSoak(cfg, stdout); err != nil {
+		_, _ = fmt.Fprintf(stderr, "soak failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func parseSoakConfig(args []string) (soakConfig, error) {
+	cfg := soakConfig{
+		duration:    1 * time.Minute,
+		concurrency: 64,
+		rps:         1000,
+	}
+	fs := flag.NewFlagSet("soak", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
+	fs.DurationVar(&cfg.duration, "duration", cfg.duration, "total test duration")
+	fs.IntVar(&cfg.concurrency, "concurrency", cfg.concurrency, "number of worker goroutines")
+	fs.IntVar(&cfg.rps, "rps", cfg.rps, "approximate total requests per second (0 for unlimited)")
+	if err := fs.Parse(args); err != nil {
+		return soakConfig{}, err
+	}
+	return cfg, nil
+}
+
+func runSoak(cfg soakConfig, out io.Writer) error {
+	return runSoakWithClient(cfg, out, nil, "")
+}
+
+func runSoakWithClient(cfg soakConfig, out io.Writer, client *http.Client, baseURL string) error {
+	if out == nil {
+		return errors.New("nil output writer")
+	}
+	if cfg.duration <= 0 {
+		return errors.New("duration must be > 0")
+	}
 
 	r := router.NewRouter()
-	_ = r.GET("/health", func(w http.ResponseWriter, _ *http.Request) {
+	if err := r.GET("/health", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	})
-	_ = r.GET("/users/:id", func(w http.ResponseWriter, req *http.Request) {
+	}); err != nil {
+		return err
+	}
+	if err := r.GET("/users/:id", func(w http.ResponseWriter, req *http.Request) {
 		id, _ := router.Param(w, "id")
 		_, _ = w.Write([]byte(id))
-	})
-	_ = r.GET("/static/*filepath", func(w http.ResponseWriter, _ *http.Request) {
+	}); err != nil {
+		return err
+	}
+	if err := r.GET("/static/*filepath", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
-	})
-
-	srv := httptest.NewServer(r)
-	defer srv.Close()
-
-	transport := &http.Transport{
-		MaxIdleConns:        1024,
-		MaxIdleConnsPerHost: 1024,
-		MaxConnsPerHost:     0,
-	}
-	client := &http.Client{Transport: transport}
-
-	paths := []string{
-		"/health",
-		"/users/123",
-		"/static/css/app.css",
+	}); err != nil {
+		return err
 	}
 
-	end := time.Now().Add(*duration)
+	if client == nil {
+		var cleanup func()
+		var err error
+		client, baseURL, cleanup, err = newNetworkSoakClient(r)
+		if err != nil {
+			client, baseURL, cleanup = newInMemorySoakClient(r)
+		}
+		defer cleanup()
+	} else if baseURL == "" {
+		return errors.New("baseURL must be set when custom client is provided")
+	}
+
+	paths := []string{"/health", "/users/123", "/static/css/app.css"}
+
+	end := time.Now().Add(cfg.duration)
 	var okCount uint64
 	var errCount uint64
 
 	var wg sync.WaitGroup
-	workers := *concurrency
+	workers := cfg.concurrency
 	if workers <= 0 {
 		workers = runtime.NumCPU()
 	}
 
 	var rateCh <-chan struct{}
-	if *rps > 0 {
-		interval := time.Second / time.Duration(*rps)
+	if cfg.rps > 0 {
+		interval := time.Second / time.Duration(cfg.rps)
 		if interval <= 0 {
 			interval = time.Nanosecond
 		}
 		tokens := make(chan struct{}, workers)
 		ticker := time.NewTicker(interval)
+		done := make(chan struct{})
 		defer ticker.Stop()
+		defer close(done)
 		go func() {
-			for range ticker.C {
+			for {
 				select {
-				case tokens <- struct{}{}:
-				default:
+				case <-done:
+					return
+				case <-ticker.C:
+					select {
+					case tokens <- struct{}{}:
+					default:
+					}
 				}
 			}
 		}()
@@ -90,7 +150,7 @@ func main() {
 					<-rateCh
 				}
 				path := paths[rnd.Intn(len(paths))]
-				resp, err := client.Get(srv.URL + path)
+				resp, err := client.Get(baseURL + path)
 				if err != nil {
 					atomic.AddUint64(&errCount, 1)
 					continue
@@ -109,10 +169,53 @@ func main() {
 	wg.Wait()
 
 	total := atomic.LoadUint64(&okCount) + atomic.LoadUint64(&errCount)
-	elapsed := duration.Seconds()
+	elapsed := cfg.duration.Seconds()
 	qps := float64(total) / elapsed
-	fmt.Printf("duration=%s concurrency=%d rps_target=%d total=%d ok=%d err=%d qps=%.1f\n",
-		duration.String(), workers, *rps, total, okCount, errCount, qps)
+	_, err := fmt.Fprintf(out, "duration=%s concurrency=%d rps_target=%d total=%d ok=%d err=%d qps=%.1f\n",
+		cfg.duration.String(), workers, cfg.rps, total, okCount, errCount, qps)
+	return err
+}
+
+func newNetworkSoakClient(handler http.Handler) (*http.Client, string, func(), error) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		return nil, "", nil, err
+	}
+	srv := httptest.NewUnstartedServer(handler)
+	srv.Listener = ln
+	srv.Start()
+
+	transport := &http.Transport{
+		MaxIdleConns:        1024,
+		MaxIdleConnsPerHost: 1024,
+		MaxConnsPerHost:     0,
+	}
+	client := &http.Client{Transport: transport}
+	cleanup := func() {
+		client.CloseIdleConnections()
+		srv.Close()
+	}
+	return client, srv.URL, cleanup, nil
+}
+
+func newInMemorySoakClient(handler http.Handler) (*http.Client, string, func()) {
+	client := &http.Client{
+		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+			rec := httptest.NewRecorder()
+			handler.ServeHTTP(rec, req)
+			return rec.Result(), nil
+		}),
+	}
+	cleanup := func() {
+		client.CloseIdleConnections()
+	}
+	return client, "http://in-memory.local", cleanup
+}
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
 }
 
 type fastRand struct {

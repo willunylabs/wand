@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-total_min="${COVERAGE_MIN_TOTAL_PCT:-78}"
+total_min="${COVERAGE_MIN_TOTAL_PCT:-80}"
 router_min="${COVERAGE_MIN_ROUTER_PCT:-80}"
 middleware_min="${COVERAGE_MIN_MIDDLEWARE_PCT:-78}"
 logger_min="${COVERAGE_MIN_LOGGER_PCT:-90}"
