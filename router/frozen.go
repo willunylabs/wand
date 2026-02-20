@@ -27,6 +27,7 @@ type frozenTable struct {
 	staticAllow map[string]string
 	hasParams   map[string]bool
 	anyParams   bool
+	hasTrailing bool
 }
 
 type frozenNode struct {
@@ -158,6 +159,7 @@ func freezeTable(src *routeTable) *frozenTable {
 	ft.staticAllow = cloneStaticAllow(src.staticAllow)
 	ft.hasParams = cloneHasParams(src.hasParams)
 	ft.anyParams = src.anyParams
+	ft.hasTrailing = src.hasTrailing
 	for method, root := range src.roots {
 		ft.roots[method] = freezeRoot(root)
 	}
@@ -407,6 +409,10 @@ func (r *FrozenRouter) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *FrozenRouter) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *frozenTable) bool {
+	// Fast skip for the common "no trailing slash route exists" case.
+	if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+		return false
+	}
 	altMatch, ok := alternatePath(ctx.matchPath)
 	if !ok || altMatch == ctx.matchPath {
 		return false
@@ -430,6 +436,9 @@ func (r *FrozenRouter) handleMethodNotAllowedInTable(w http.ResponseWriter, req 
 		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
 	}
 	if !r.StrictSlash {
+		if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+			return false
+		}
 		if altMatch, ok := alternatePath(ctx.matchPath); ok {
 			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
 				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)

@@ -61,6 +61,7 @@ type routeTable struct {
 	staticAllow map[string]string
 	hasParams   map[string]bool
 	anyParams   bool
+	hasTrailing bool
 }
 
 // Router holds the routing tree.
@@ -454,6 +455,9 @@ func (r *Router) handle(host, method, pattern string, handler HandleFunc, groupM
 	err := root.insert(matchPattern, matchParts, 0, handler, hasParams)
 	if err == nil {
 		r.routesCount++
+		if len(matchPattern) > 1 && matchPattern[len(matchPattern)-1] == '/' {
+			table.hasTrailing = true
+		}
 		if hasParams {
 			table.hasParams[method] = true
 			table.anyParams = true
@@ -598,6 +602,10 @@ func (r *Router) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 }
 
 func (r *Router) tryAlternateSlashInTable(w http.ResponseWriter, req *http.Request, ctx routeContext, table *routeTable) bool {
+	// Fast skip for the common "no trailing slash route exists" case.
+	if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+		return false
+	}
 	altMatch, ok := alternatePath(ctx.matchPath)
 	if !ok || altMatch == ctx.matchPath {
 		return false
@@ -621,6 +629,9 @@ func (r *Router) handleMethodNotAllowedInTable(w http.ResponseWriter, req *http.
 		return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
 	}
 	if !r.StrictSlash {
+		if len(ctx.matchPath) > 1 && ctx.matchPath[len(ctx.matchPath)-1] != '/' && !table.hasTrailing {
+			return false
+		}
 		if altMatch, ok := alternatePath(ctx.matchPath); ok {
 			if allow, ok := r.allowedMethodsInTable(altMatch, table); ok {
 				return respondMethodNotAllowed(w, req, allow, r.MethodNotAllowed)
